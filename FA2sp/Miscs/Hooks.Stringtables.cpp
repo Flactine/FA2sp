@@ -22,6 +22,43 @@ std::map<FString, FString> StringtableLoader::CSFFiles_Stringtable;
 
 FString StringtableLoader::QueryUIName(const char* pRegName, bool bOnlyOneLine)
 {
+    auto fa2name = Variables::RulesMap.GetString(pRegName, "FA2Name", "");
+    fa2name.MakeLower();
+    if (fa2name != "")
+    {
+        FString fa2ccstring = "";
+
+        if (fa2name.Find("nostr:") == 0)
+        {
+            fa2ccstring = Variables::RulesMap.GetString(pRegName, "FA2Name", "").Mid(6);
+        }
+        else if (StringtableLoader::CSFFiles_Stringtable.find(fa2name) != StringtableLoader::CSFFiles_Stringtable.end())
+        {
+            fa2ccstring = StringtableLoader::CSFFiles_Stringtable[fa2name];
+        }
+
+        if (fa2ccstring != "")
+        {
+            auto lang = FinalAlertConfig::Language + "-";
+            auto theater = TheaterHelpers::GetCurrentSuffix();
+            theater.MakeUpper();
+            theater = "RenameID" + theater;
+
+            if (auto pString = CINI::FALanguage().TryGetString(lang + theater, pRegName))
+                fa2ccstring = *pString;
+            else if (auto pString = CINI::FALanguage().TryGetString(lang + "RenameID", pRegName))
+                fa2ccstring = *pString;
+
+            if (bOnlyOneLine)
+            {
+                fa2ccstring.Replace("\r", "");
+                int idx = fa2ccstring.Find('\n');
+                return idx == -1 ? fa2ccstring : fa2ccstring.Mid(0, idx);
+            }
+            return fa2ccstring;
+        }
+    }
+
     auto uiname = Variables::RulesMap.GetString(pRegName, "UIName", "");
     uiname.MakeLower();
     FString ccstring = "";
