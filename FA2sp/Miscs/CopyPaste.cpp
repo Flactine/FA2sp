@@ -17,6 +17,7 @@ bool CopyPaste::CopyWholeMap = false;
 bool CopyPaste::OnLButtonDownPasted = false;
 bool CopyPaste::IsCutting = false;
 std::vector<TileRule> CopyPaste::TileConvertRules;
+char CopyPaste::CurrentTileConvertTheaters[2];
 
 const char* CopyPaste::GetString(const MyClipboardData& cell, const StringField& field, MyClipboardData* pBufferBase)
 {
@@ -57,21 +58,22 @@ void CopyPaste::Copy(const std::set<MapCoord>& coords)
         auto& pCellExt = CMapDataExt::CellDataExts[pos];
 
         MyClipboardData item = {};
+        auto tileIndex = pCell->TileIndex == 0xFFFF ? 0 : pCell->TileIndex;
         item.X = coords.X;
         item.Y = coords.Y;
         item.Overlay = pCellExt.NewOverlay;
         item.OverlayData = pCell->OverlayData;
-        item.TileIndex = pCell->TileIndex;
+        item.TileIndex = tileIndex;
         item.TileIndexHiPart = pCell->TileIndexHiPart;
         item.TileSubIndex = pCell->TileSubIndex;
-        item.TileSet = CMapDataExt::TileData[CMapDataExt::GetSafeTileIndex(pCell->TileIndex)].TileSet;
-        item.TileSetSubIndex = pCell->TileIndex - CMapDataExt::TileSet_starts[item.TileSet];
+        item.TileSet = CMapDataExt::TileData[CMapDataExt::GetSafeTileIndex(tileIndex)].TileSet;
+        item.TileSetSubIndex = tileIndex - CMapDataExt::TileSet_starts[item.TileSet];
         item.Height = pCell->Height;
         item.IceGrowth = pCell->IceGrowth;
         item.Flag = pCell->Flag;
 
         relativeHeight = std::min(relativeHeight, pCell->Height -
-            CMapDataExt::TileData[CMapDataExt::GetSafeTileIndex(pCell->TileIndex)].TileBlockDatas[pCell->TileSubIndex].Height);
+            CMapDataExt::TileData[CMapDataExt::GetSafeTileIndex(tileIndex)].TileBlockDatas[pCell->TileSubIndex].Height);
         lowest = std::min(lowest, (int)pCell->Height);
         highest = std::max(highest, (int)pCell->Height);
 
@@ -291,8 +293,9 @@ void CopyPaste::Copy(const std::set<MapCoord>& coords)
             if (CIsoViewExt::PasteGround)
             {
                 CMapDataExt::GetExtension()->PlaceTileAt(cell.X, cell.Y, 0, 3);
-                pCell->Height = (cell.X, cell.Y, realLowest);
+                pCell->Height = realLowest;
             }
+            CMapData::Instance->UpdateMapPreviewAt(cell.X, cell.Y);
         }
         CIsoView::GetInstance()->RedrawWindow(nullptr, nullptr, RDW_INVALIDATE | RDW_UPDATENOW);
     }
@@ -454,18 +457,21 @@ void CopyPaste::Paste(int X, int Y, int nBaseHeight, MyClipboardData* data, size
         {
             if (!TileConvertRules.empty())
             {
-                pCell->TileIndex = cell.TileIndex;
+				pCell->TileIndex = cell.TileIndex;
                 pCell->TileSubIndex = cell.TileSubIndex;
                 pCell->Height = std::clamp(cell.Height + nBaseHeight, 0, 14);
+
                 ConvertTile(*pCell);
-            }
+
+				pCell->TileIndex = CMapDataExt::GetSafeTileIndex(pCell->TileIndex);
+				pCell->TileSubIndex = CMapDataExt::GetSafeSubTileIndex(pCell->TileIndex, pCell->TileSubIndex);
+			}
             else
             {
                 if (cell.TileSet < CMapDataExt::TileSet_starts.size() - 1
                     && CMapDataExt::TileSet_starts[cell.TileSet] + cell.TileSetSubIndex < CMapDataExt::TileSet_starts[cell.TileSet + 1])
                     pCell->TileIndex = CMapDataExt::TileSet_starts[cell.TileSet] + cell.TileSetSubIndex;
-                else
-                    pCell->TileIndex = 0;
+
                 pCell->TileSubIndex = cell.TileSubIndex;
                 pCell->Height = std::clamp(cell.Height + nBaseHeight, 0, 14);
 
@@ -473,6 +479,9 @@ void CopyPaste::Paste(int X, int Y, int nBaseHeight, MyClipboardData* data, size
                 {
                     pCell->Flag.AltIndex = 0;
                 }
+
+                pCell->TileIndex = CMapDataExt::GetSafeTileIndex(pCell->TileIndex);
+				pCell->TileSubIndex = CMapDataExt::GetSafeSubTileIndex(pCell->TileIndex, pCell->TileSubIndex);
             }
 
             pCell->TileIndexHiPart = cell.TileIndexHiPart;
@@ -485,90 +494,125 @@ void CopyPaste::Paste(int X, int Y, int nBaseHeight, MyClipboardData* data, size
             const char* buildingStr = (i == 0) ? GetString(cell, cell.BuildingData, data) :
                 (i == 1) ? GetString(cell, cell.BuildingData_2, data) :
                 GetString(cell, cell.BuildingData_3, data);
-            if (OnLButtonDownPasted && CIsoViewExt::PasteStructures && *buildingStr)
+            if (CIsoViewExt::PasteStructures && *buildingStr)
             {
-                FString value(buildingStr);
-                auto atoms = FString::SplitString(value, 16);
-                CBuildingData data;
+                if (OnLButtonDownPasted)
+                {
+                    FString_view value(buildingStr);
+                    auto atoms = FString::SplitString(value, 16);
+                    CBuildingData data;
+                    data.House = atoms[0];
+                    data.TypeID = atoms[1];
+                    data.Health = atoms[2];
+                    data.Y.Format("%d", Y + offset_y);
+                    data.X.Format("%d", X + offset_x);
+                    data.Facing = atoms[5];
+                    data.Tag = atoms[6];
+                    data.AISellable = atoms[7];
+                    data.AIRebuildable = atoms[8];
+                    data.PoweredOn = atoms[9];
+                    data.Upgrades = atoms[10];
+                    data.SpotLight = atoms[11];
+                    data.Upgrade1 = atoms[12];
+                    data.Upgrade2 = atoms[13];
+                    data.Upgrade3 = atoms[14];
+                    data.AIRepairable = atoms[15];
+                    data.Nominal = atoms[16];
+                    CMapData::Instance->SetBuildingData(&data, NULL, NULL, 0, "");
+                }
+                else if (buildingStr)
+                {
+					pCellExt.PasteBuilding = buildingStr;
+				}
+            }
+        }
+
+        const char* smudgeStr = GetString(cell, cell.SmudgeData, data);
+        if (CIsoViewExt::PasteSmudges && *smudgeStr)
+        {
+            if (OnLButtonDownPasted)
+            {
+                CSmudgeData data;
+                data.TypeID = smudgeStr;
+                data.X = Y + offset_y;
+                data.Y = X + offset_x;
+                CMapData::Instance->SetSmudgeData(&data);
+            }
+            else
+            {
+                pCellExt.PasteSmudge = smudgeStr;
+            }
+        }
+
+        const char* terrainStr = GetString(cell, cell.TerrainData, data);
+        if (CIsoViewExt::PasteTerrains && *terrainStr)
+        {
+            if(OnLButtonDownPasted)
+            {
+                CMapData::Instance->SetTerrainData(terrainStr, CMapData::Instance->GetCoordIndex(X + offset_x, Y + offset_y));
+            }
+            else
+            {
+                pCellExt.PasteTerrain = terrainStr;
+            }
+        }
+
+        const char* unitStr = GetString(cell, cell.UnitData, data);
+        if (CIsoViewExt::PasteUnits && *unitStr)
+        {
+            if (OnLButtonDownPasted)
+            {
+                FString_view value(unitStr);
+                auto atoms = FString::SplitString(value, 13);
+                CUnitData data;
                 data.House = atoms[0];
                 data.TypeID = atoms[1];
                 data.Health = atoms[2];
                 data.Y.Format("%d", Y + offset_y);
                 data.X.Format("%d", X + offset_x);
                 data.Facing = atoms[5];
-                data.Tag = atoms[6];
-                data.AISellable = atoms[7];
-                data.AIRebuildable = atoms[8];
-                data.PoweredOn = atoms[9];
-                data.Upgrades = atoms[10];
-                data.SpotLight = atoms[11];
-                data.Upgrade1 = atoms[12];
-                data.Upgrade2 = atoms[13];
-                data.Upgrade3 = atoms[14];
-                data.AIRepairable = atoms[15];
-                data.Nominal = atoms[16];
-                CMapData::Instance->SetBuildingData(&data, NULL, NULL, 0, "");
+                data.Status = atoms[6];
+                data.Tag = atoms[7];
+                data.VeterancyPercentage = atoms[8];
+                data.Group = atoms[9];
+                data.IsAboveGround = atoms[10];
+                data.FollowsIndex = atoms[11];
+                data.AutoNORecruitType = atoms[12];
+                data.AutoYESRecruitType = atoms[13];
+                CMapData::Instance->SetUnitData(&data, NULL, NULL, 0, "");
+            }
+            else
+            {
+                pCellExt.PasteUnit = unitStr;
             }
         }
 
-        const char* smudgeStr = GetString(cell, cell.SmudgeData, data);
-        if (OnLButtonDownPasted && CIsoViewExt::PasteSmudges && *smudgeStr)
-        {
-            CSmudgeData data;
-            data.TypeID = smudgeStr;
-            data.X = Y + offset_y;
-            data.Y = X + offset_x;
-            CMapData::Instance->SetSmudgeData(&data);
-        }
-
-        const char* terrainStr = GetString(cell, cell.TerrainData, data);
-        if (OnLButtonDownPasted && CIsoViewExt::PasteTerrains && *terrainStr)
-        {
-            CMapData::Instance->SetTerrainData(terrainStr, CMapData::Instance->GetCoordIndex(X + offset_x, Y + offset_y));
-        }
-
-        const char* unitStr = GetString(cell, cell.UnitData, data);
-        if (OnLButtonDownPasted && CIsoViewExt::PasteUnits && *unitStr)
-        {
-            FString value(unitStr);
-            auto atoms = FString::SplitString(value, 13);
-            CUnitData data;
-            data.House = atoms[0];
-            data.TypeID = atoms[1];
-            data.Health = atoms[2];
-            data.Y.Format("%d", Y + offset_y);
-            data.X.Format("%d", X + offset_x);
-            data.Facing = atoms[5];
-            data.Status = atoms[6];
-            data.Tag = atoms[7];
-            data.VeterancyPercentage = atoms[8];
-            data.Group = atoms[9];
-            data.IsAboveGround = atoms[10];
-            data.FollowsIndex = atoms[11];
-            data.AutoNORecruitType = atoms[12];
-            data.AutoYESRecruitType = atoms[13];
-            CMapData::Instance->SetUnitData(&data, NULL, NULL, 0, "");
-        }
-
         const char* aircraftStr = GetString(cell, cell.AircraftData, data);
-        if (OnLButtonDownPasted && CIsoViewExt::PasteAircrafts && *aircraftStr)
+        if (CIsoViewExt::PasteAircrafts && *aircraftStr)
         {
-            FString value(aircraftStr);
-            auto atoms = FString::SplitString(value, 11);
-            CAircraftData data;
-            data.House = atoms[0];
-            data.TypeID = atoms[1];
-            data.Health = atoms[2];
-            data.Y.Format("%d", Y + offset_y);
-            data.X.Format("%d", X + offset_x);
-            data.Facing = atoms[5];
-            data.Status = atoms[6];
-            data.Tag = atoms[7];
-            data.VeterancyPercentage = atoms[8];
-            data.Group = atoms[9];
-            data.AutoNORecruitType = atoms[10];
-            data.AutoYESRecruitType = atoms[11];
-            CMapData::Instance->SetAircraftData(&data, NULL, NULL, 0, "");
+            if (OnLButtonDownPasted)
+            {
+                FString_view value(aircraftStr);
+                auto atoms = FString::SplitString(value, 11);
+                CAircraftData data;
+                data.House = atoms[0];
+                data.TypeID = atoms[1];
+                data.Health = atoms[2];
+                data.Y.Format("%d", Y + offset_y);
+                data.X.Format("%d", X + offset_x);
+                data.Facing = atoms[5];
+                data.Status = atoms[6];
+                data.Tag = atoms[7];
+                data.VeterancyPercentage = atoms[8];
+                data.Group = atoms[9];
+                data.AutoNORecruitType = atoms[10];
+                data.AutoYESRecruitType = atoms[11];
+                CMapData::Instance->SetAircraftData(&data, NULL, NULL, 0, "");
+            }
+            else
+            {
+                pCellExt.PasteAircraft = aircraftStr;
+            }
         }
 
         for (int i = 0; i < 3; ++i)
@@ -576,32 +620,40 @@ void CopyPaste::Paste(int X, int Y, int nBaseHeight, MyClipboardData* data, size
             const char* inf = (i == 0) ? GetString(cell, cell.InfantryData_1, data) :
                 (i == 1) ? GetString(cell, cell.InfantryData_2, data) :
                 GetString(cell, cell.InfantryData_3, data);
-            if (OnLButtonDownPasted && CIsoViewExt::PasteInfantries && *inf)
-            {
-                FString value(inf);
-                auto atoms = FString::SplitString(value, 13);
-                CInfantryData data;
-                data.House = atoms[0];
-                data.TypeID = atoms[1];
-                data.Health = atoms[2];
-                data.Y.Format("%d", Y + offset_y);
-                data.X.Format("%d", X + offset_x);
-                data.SubCell = atoms[5];
-                data.Status = atoms[6];
-                data.Facing = atoms[7];
-                data.Tag = atoms[8];
-                data.VeterancyPercentage = atoms[9];
-                data.Group = atoms[10];
-                data.IsAboveGround = atoms[11];
-                data.AutoNORecruitType = atoms[12];
-                data.AutoYESRecruitType = atoms[13];
-                CMapData::Instance->SetInfantryData(&data, NULL, NULL, 0, -1);
+            if (CIsoViewExt::PasteInfantries && *inf)
+            {            
+                if (OnLButtonDownPasted)
+                {
+                    FString_view value(inf);
+                    auto atoms = FString::SplitString(value, 13);
+                    CInfantryData data;
+                    data.House = atoms[0];
+                    data.TypeID = atoms[1];
+                    data.Health = atoms[2];
+                    data.Y.Format("%d", Y + offset_y);
+                    data.X.Format("%d", X + offset_x);
+                    data.SubCell = atoms[5];
+                    data.Status = atoms[6];
+                    data.Facing = atoms[7];
+                    data.Tag = atoms[8];
+                    data.VeterancyPercentage = atoms[9];
+                    data.Group = atoms[10];
+                    data.IsAboveGround = atoms[11];
+                    data.AutoNORecruitType = atoms[12];
+                    data.AutoYESRecruitType = atoms[13];
+                    CMapData::Instance->SetInfantryData(&data, NULL, NULL, 0, -1);
+                }
+                else
+                {
+                    pCellExt.PasteInfantry[i] = inf;
+                }
             }
         }
 
         CMapData::Instance->UpdateMapPreviewAt(X + offset_x, Y + offset_y);
         CopyPaste::PastedCoords.insert(MapCoord{ X + offset_x, Y + offset_y });
-    }
+		pCellExt.IsPasteCell = true;
+	}
 }
 
 void CopyPaste::PasteArea(int X, int Y, int nBaseHeight, MyClipboardData* data, size_t length, int recordType)
@@ -697,14 +749,19 @@ void CopyPaste::PasteArea(int X, int Y, int nBaseHeight, MyClipboardData* data, 
     CopyPaste::PastedCoords.clear();
 }
 
-void CopyPaste::LoadTileConvertRule(char sourceTheater)
+void CopyPaste::LoadTileConvertRule(char sourceTheater, char currentTheater)
 {
-    TileConvertRules.clear();
-    bool reverse = false;
+    if (CurrentTileConvertTheaters[0] == sourceTheater && CurrentTileConvertTheaters[1] == currentTheater)
+		return;
+
+	CurrentTileConvertTheaters[0] = sourceTheater;
+	CurrentTileConvertTheaters[1] = currentTheater;
+	TileConvertRules.clear();
+	bool reverse = false;
     FString iniSection;
     iniSection.Format("%s2%sTileRules", 
         TheaterHelpers::GetSuffix(sourceTheater), 
-        TheaterHelpers::GetSuffix(CLoading::Instance->TheaterIdentifier));
+        TheaterHelpers::GetSuffix(currentTheater));
 
     std::string path = CFinalSunApp::Instance->ExePath();
     path += "\\TileConvertRules.ini";
@@ -715,10 +772,10 @@ void CopyPaste::LoadTileConvertRule(char sourceTheater)
     if (!ini.SectionExists(iniSection))
     {
         iniSection.Format("%s2%sTileRules",
-            TheaterHelpers::GetSuffix(CLoading::Instance->TheaterIdentifier),
+            TheaterHelpers::GetSuffix(currentTheater),
             TheaterHelpers::GetSuffix(sourceTheater));
         reverse = true;
-    }
+	}
 
     if (auto pSection = ini.GetSection(iniSection))
     {
@@ -780,7 +837,7 @@ void CopyPaste::ConvertTile(CellData& cell)
         const std::vector<int>& toTiles =
             rule.reverse ? rule.sourceTiles : rule.destinationTiles;
 
-        auto it = std::find(fromTiles.begin(), fromTiles.end(), CMapDataExt::GetSafeTileIndex(cell.TileIndex));
+        auto it = std::find(fromTiles.begin(), fromTiles.end(), cell.TileIndex);
         if (it == fromTiles.end())
             continue;
 
@@ -910,10 +967,9 @@ DEFINE_HOOK(4C3850, CMapData_PasteAt, 8)
             const auto length = reinterpret_cast<size_t*>(ptr)[1];
             const int identifier = reinterpret_cast<int*>(ptr)[2];
             const int recordType = reinterpret_cast<int*>(ptr)[3];
-            CopyPaste::TileConvertRules.clear();
             if (identifier != CLoading::Instance->TheaterIdentifier)
             {
-                CopyPaste::LoadTileConvertRule(identifier);
+				CopyPaste::LoadTileConvertRule(identifier, CLoading::Instance->TheaterIdentifier);
             }
             const auto p = reinterpret_cast<MyClipboardData*>(reinterpret_cast<char*>(ptr) + 16);
             if (GetAsyncKeyState(VK_CONTROL) & 0x8000)
