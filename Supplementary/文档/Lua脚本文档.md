@@ -25,10 +25,10 @@
 | `iso_size()` | `number` | 地图完整范围的宽度（宽+高，遍历单元格用） |
 | `width()` | `number` | 地图有效范围的宽度（玩家视角） |
 | `height()` | `number` | 地图有效范围的高度（玩家视角） |
-| `local_width()` | `number` | 当前可视区域宽度（玩家视角） |
-| `local_height()` | `number` | 当前可视区域高度（玩家视角） |
-| `local_top()` | `number` | 可视区域距顶端的偏移 |
-| `local_left()` | `number` | 可视区域距左侧的偏移 |
+| `local_width()` | `number` | 当前可游玩区域宽度（玩家视角） |
+| `local_height()` | `number` | 当前可游玩区域高度（玩家视角） |
+| `local_top()` | `number` | 可游玩区域距顶端的偏移 |
+| `local_left()` | `number` | 可游玩区域距左侧的偏移 |
 | `waypoint_count()` | `number` | 路径点数量（`Waypoints` 节键数量） |
 | `unit_count()` | `number` | 车辆（Units）数量 |
 | `infantry_count()` | `number` | 步兵（Infantry）数量 |
@@ -158,6 +158,19 @@ print("文件编码: " .. enc)
 - **说明**：立即终止当前 Lua 脚本的执行。
 - **返回**：无。
 
+### `set_yolo_mode(enable)`
+- **说明**：启用/禁用 YOLO 模式。启用后，脚本运行期间将跳过所有确认弹窗，直接执行操作。
+- **参数**：
+  - `enable` (`boolean`) — `true` 启用，`false` 禁用。
+- **返回** (`boolean`)：YOLO 模式是否已启用。
+- **备注**：
+  - 启用 YOLO 模式时，会弹出一次独立的确认对话框，确认后才会生效。
+  - YOLO 模式会跳过以下确认：
+    - 高风险操作安全扫描（`os.execute`、`io.open` 等）
+    - 恢复快照确认（`restore_snapshot`）
+    - 建筑放置重叠警告（`place_building` 自动将 `ignoreOverlap` 设为 `true`）
+  - 脚本中显式调用的 `message_box` 不受影响，仍会正常弹出。
+
 ### `exec(command, [options])`
 - **说明**：执行外部程序/命令、打开 URL 或文件，支持同步/异步模式和输出捕获。
 - **参数**：
@@ -202,6 +215,24 @@ end
 -- 指定工作目录
 exec("debug.log", { cwd = game_path().."debug\\", file = true })
 ```
+
+### `screenshot(path)`
+- **说明**：对当前地图窗口截图并保存为 PNG 格式。
+- **参数**：
+  - `path` (`string`) — 保存路径（含 `.png` 扩展名）。
+- **返回** (`boolean`)：`true` 表示保存成功，`false` 表示失败。
+- **备注**：截图尺寸为当前地图窗口的可见区域。
+
+### `screenshot_temp()`
+- **说明**：对当前地图窗口截图并保存到 `%TEMP%\FinalAlert2` 目录，文件名自动带时间戳。
+- **参数**：无。
+- **返回** (`string` 或 `nil`)：成功时返回完整的文件路径，失败时返回 `nil`。
+
+### `get_tile_image(index)`
+- **说明**：渲染指定索引的地形并保存为 PNG 到 `%TEMP%\FinalAlert2` 目录。
+- **参数**：
+  - `index` (`int`) — 地形索引。
+- **返回** (`string` 或 `nil`)：成功时返回完整的文件路径，失败时返回 `nil`。
 
 ---
 
@@ -996,7 +1027,7 @@ redraw_window()
   - `house` (`string`) — 所属方。
   - `type` (`string`) — 建筑类型 ID。
   - `x, y` (`number`) — 坐标。
-  - `ignore_overlap` (`boolean`, 可选) — 若为 `true` 可跳过重叠检查，默认为 `false`。
+  - `ignore_overlap` (`boolean`, 可选) — 若为 `true` 可跳过重叠检查，AI调用时应设置为 `true`，默认为 `false`。
 - **返回**：无。
 
 #### `remove_building(index)`
@@ -1024,6 +1055,24 @@ redraw_window()
 #### `get_buildings()`
 - **说明**：返回所有建筑的数组表。
 - **返回** (`table<building>`)：建筑对象数组。
+
+#### `get_building_foundation(id)`
+- **说明**：获取建筑类型的占地面积信息。
+- **参数**：
+  - `id` (`string`) — 建筑类型 ID。
+- **返回** (`table`)：`{width, height, isCustom}`，其中：
+  - `width` (`number`) — X 方向长度（格数）。
+  - `height` (`number`) — Y 方向长度（格数）。
+  - `isCustom` (`number`) — 是否为 CustomFoundation，`1` 为是，`0` 为否。
+- **备注**：未找到建筑类型时返回 `{1, 1, 0}`。
+
+#### `get_building_cells(id)`
+- **说明**：获取建筑类型所占的具体格子坐标。
+- **参数**：
+  - `id` (`string`) — 建筑类型 ID。
+- **返回** (`table`)：二维数组 `{{x, y}, {x, y}, ...}`，每个元素是 `{x, y}` 格式的格子坐标。
+- **备注**：
+  - 未找到建筑类型时返回 `{{0, 0}}`。
 
 **重要注释**：修改建筑属性同样需要移除再重新放置。批量修改时的索引映射与单位一致。示例：随机化建筑血量。
 ```lua
@@ -1157,7 +1206,7 @@ cell:apply()
 - **返回** (`table<tile>`)：该地形所有有效子块组成的数组。
 
 #### `place_whole_tile(x, y, tile_index)`
-- **说明**：在指定坐标放置整个地形（自动选取最佳子块）。
+- **说明**：在指定坐标放置整个地形。
 - **参数**：
   - `x, y` (`number`) — 坐标。
   - `tile_index` (`number`) — 地形索引。
@@ -1224,6 +1273,26 @@ cell:apply()
 - **参数**：
   - `x1, y1, x2, y2` (`number`) — 矩形对角坐标。
 - **返回**：无。
+
+#### `get_tilesets()`
+- **说明**：获取当前地图类型下所有可用地形组（tileset）的索引与名称。
+- **返回** (`table<table>`)：地形组数组，每个元素为 `{index=..., name=...}`，如 `{{index=0, name="亮色草地"}, ...}`。
+- **示例**：
+```lua
+for i, t in ipairs(get_tilesets()) do
+    print(t.index .. " - " .. t.name)
+end
+```
+
+#### `get_tileset_info(tileset_index)`
+- **说明**：获取指定地形组的起始地块索引和地块数量。
+- **参数**：`tileset_index` (`number`) — 地形组索引。
+- **返回** (`table`)：`{start=..., count=...}`，其中 `start` 为该地形组的起始 tile 索引，`count` 为该地形组包含的地块数量。索引越界时返回 `{start=-1, count=0}`。
+- **示例**：
+```lua
+local info = get_tileset_info(0)
+print("start: " .. info.start .. ", count: " .. info.count)
+```
 
 **补充**：进行大量地形修改前，建议调用 `save_undo()` 以允许用户回退。完成修改后调用 `redraw_window()` 和 `update_minimap()` 刷新界面。
 
@@ -1443,18 +1512,17 @@ local trigger = trigger:new(new_id)
 - `update_unit()`
 - `update_aircraft()`
 - `update_building()`
-- `update_terrain()`
 - `update_waypoint()`
 - `update_node()`
 - `update_overlay()`
 - `update_tube()`
-- `update_smudge()`
 - `update_tiles()`
 - `update_trigger()`：刷新触发（会通知已打开的触发编辑器窗口）。
 
 **使用提示**：
 - 对于直接通过 `write_string` 修改的 INI 内容，调用对应的 `update_xxx()` 函数确保内存数据与 INI 同步，然后调用 `redraw_window()` 立即刷新视图。
 - 对于使用 lua 类的 `apply()` 函数进行的修改，不需要调用刷新函数。特别是 `cell` 类，如果使用 `update_tiles()` 会错误地覆盖修改。
+- 地形对象和污染的 INI 仅会在地图保存时修改，因此没有对应的刷新函数。
 
 ### 界面更新
 
@@ -1492,11 +1560,19 @@ end
 ### 撤销与重做
 
 #### `save_undo()`
-- **说明**：记录当前覆盖物与地形的撤销点。通常在进行大量地形修改前调用。
+- **说明**：记录当前覆盖物与地形的撤销点。通常在进行大量地形修改前调用。每次使用生成一个新的撤销点。
 - **返回**：无。
 
 #### `save_undo_objects()`
-- **说明**：记录游戏对象（建筑、车辆、飞行器、步兵、地形对象、污染、基地节点、隧道、路径点、单元标记）、地图注释、测距工具、可视区域大小的撤销点。通常在进行大量游戏对象修改前调用。
+- **说明**：记录游戏对象（建筑、车辆、飞行器、步兵、地形对象、污染、基地节点、隧道、路径点、单元标记）、地图注释、测距工具、可视区域大小的撤销点。通常在进行大量游戏对象修改前调用。每次使用生成一个新的撤销点。
+- **返回**：无。
+
+#### `save_undo_all()`
+- **说明**：记录覆盖物与地形、游戏对象（建筑、车辆、飞行器、步兵、地形对象、污染、基地节点、隧道、路径点、单元标记）、地图注释、测距工具、可视区域大小的撤销点。通常在进行大量地形与游戏对象修改前调用。每次使用生成一个新的撤销点。
+- **返回**：无。
+
+#### `do_undo()`
+- **说明**：执行一次撤销操作，回退到上一个撤销点（与编辑器的撤销快捷键效果一致）。
 - **返回**：无。
 
 ### 其他
@@ -1506,6 +1582,12 @@ end
 - **参数**：
   - `x, y` (`number`) — 坐标。
 - **返回** (`boolean`)：是否在地图内。
+
+#### `in_view(x, y)`
+- **说明**：判断坐标是否在编辑器视野范围内。
+- **参数**：
+  - `x, y` (`number`) — 坐标。
+- **返回** (`boolean`)：是否在视野内。
 
 #### `move_to(x, y)` / `move_to(waypoint_number)`
 - **说明**：移动视野居中到指定坐标或数字路径点位置。若只传一个参数，则视为路径点数字。
@@ -1725,6 +1807,7 @@ end
 - **返回**：(`number`): 输出整数。
 
 **关键用法提示**：
+- trigger类主要适用于对大批量触发进行简单修改，若修改程度较为复杂，或涉及新建事件、行为等操作，建议使用`触发编辑器`。
 - 任何对触发属性的修改，最后必须调用 `trigger:apply()`，否则不会保存到地图文件。
 - 创建新触发时，通常先调用 `trigger:new()`，然后分别设置属性、添加事件和行为，最后 `apply()`。
 - 触发一般都需要一个标签。使用`trigger:new()`创建的触发，如果没有特殊说明，一般需要同时创建一个标签，使用`add_tag("", "", 0)`创建一个默认名称的重复类型为0的标签。
@@ -1742,6 +1825,106 @@ for i, id in pairs(get_triggers()) do
         t:apply()
     end
 end
+```
+
+---
+
+### 触发编辑器（无头，`te_` 系列）
+
+- **说明**：本组函数操作一个隐藏的“触发编辑器”实例，复用编辑器全部编辑逻辑（事件/行为类型加载、参数选项填充、参数联动、名称与描述生成）。可以返回可用事件、行为，选中事件、行为的可用参数等信息，而无需处理原始ini文本、参数位置等底层数据。它与数据层 `trigger` 类互为补充：`trigger` 类适合已知裸值时的批量读写；`te_` 系列适合在编辑器规则下探索（类型含义、参数可填内容）与校验、再写入（自动套用名称/描述/编码规则）。
+- **与 `trigger` 类混用时的数据新鲜度**：
+  - `te_` 编辑后 INI 立即变化，旧的 `trigger` 对象为快照已失效，需重新 `get_trigger(id)`。
+  - `trigger:apply()` 写 INI 后，编辑器内部缓存过期：每次 `te_select_trigger` 都会重读 INI，天然安全；但已在编辑中（已 select 未重新 select）的触发需主动重新 `te_select_trigger`。
+- **索引约定**：事件序号、行为序号、参数槽位均从 **1** 开始；`te_get_*_options` 的返回表从 1 开始；`te_get_selected_trigger` 无选中触发时返回 `nil`。
+- **参数设置两种模式**：
+  - `te_set_event_param` / `te_set_action_param`（直接设置）：原样写入参数值，不校验选项列表，用于已知裸值的场景。
+  - `te_set_event_param_fuzzy` / `te_set_action_param_fuzzy`（模糊设置）：在选项列表中按“裸值精确 → 显示文本精确 → 显示文本包含（不区分大小写）”三级匹配，失败时向输出窗口报告错误并**不做任何修改**。推荐用于按名称/描述查找参数。
+
+#### `te_new_trigger([name = ""], [house = ""])`
+- **说明**：新建一个触发并自动选中它。分配新 ID 时会在内部与 Lua `trigger` 类保留的 ID 同步，避免撞号。新建的触发不自动创建默认事件/行为，需要自行用 `te_add_event`/`te_add_action` 添加。
+- **返回** (`table` 或 `nil`)：`{ id = "<触发ID>" }`。
+
+#### `te_select_trigger(id)`
+- **说明**：按 ID 选中一个已有触发。
+- **参数**：`id` (`string`) — 触发 ID。
+- **返回** (`boolean`)：是否选中成功。
+
+#### `te_get_selected_trigger()`
+- **说明**：获取当前选中触发的 ID。
+- **返回** (`string` 或 `nil`)：当前选中触发 ID；无选中时为 `nil`。
+
+#### `te_get_trigger()`
+- **说明**：获取当前选中触发的完整信息，包括全部事件与行为及其参数槽位。
+- **返回** (`table` 或 `nil`)：结构如下：
+  - `id`, `name`, `house`, `attached_trigger` (`string`)
+  - `disabled`, `easy`, `medium`, `hard` (`boolean`)
+  - `repeat_type` (`string`)
+  - `events` / `actions` (`table<int, table>`)：每项为事件/行为信息，取 `nil` 表示该项无效，有效时含 `ok=true`, `num`, `name`, `desc`, `params`（数组，每项含 `slot`, `used`, `desc`, `type`, `value`, `display`）。
+
+#### `te_set_trigger_prop(key, value)`
+- **说明**：设置当前触发的一个属性。
+- **参数**：`key` (`string`) — 取值 `name`/`house`/`attached_trigger`/`disabled`/`easy`/`medium`/`hard`/`repeat_type`；`value` (`string`) — 新值（布尔类属性接受 `"1"`/`"true"`/`"yes"`）。
+- **返回** (`boolean`)：是否成功。
+
+#### `te_delete_trigger([keep_tags = false])`
+- **说明**：删除当前选中触发（自动跳过删除确认框）。
+- **参数**：`keep_tags` (`boolean`) — 是否保留关联标签。
+- **返回** (`boolean`)：是否成功。
+
+#### `te_get_event_types([filter = ""], [max = 50])`
+#### `te_get_action_types([filter = ""], [max = 50])`
+- **说明**：查询事件/行为类型元数据，不依赖选中触发，可独立使用。`filter` 会在名称与描述中做不区分大小写的包含匹配。
+- **返回** (`table<int, table>`)：每项含 `num`, `name`, `desc`。
+
+#### `te_get_event_type(num)` / `te_get_action_type(num)`
+- **说明**：精确查询指定编号 `num` 的事件/行为类型的详细说明（对应编辑器里的描述框内容）。不依赖选中触发。若该类型不存在返回 `nil`。
+- **返回** (`table` 或 `nil`)：含 `num`, `name`, `desc`。
+
+#### `te_select_event(idx)` / `te_select_action(idx)`
+- **说明**：选中第 `idx`（从 1 开始）个事件/行为并返回其信息。
+- **返回** (`table` 或 `nil`)：含 `ok`, `num`, `name`, `desc`, `params`。
+
+#### `te_get_event_options(slot, [filter = ""], [max = 50])` / `te_get_action_options(slot, [filter = ""], [max = 50])`
+- **说明**：获取当前选中事件/行为第 `slot`（从 1 开始）个参数槽的可用选项（由该参数的类型/联动规则决定）。
+- **返回** (`table<int, table>`)：每项含 `value`（裸值）、`text`（显示文本）。
+
+#### `te_set_event_type(num)` / `te_set_action_type(num)`
+- **说明**：将当前选中事件/行为的类型改为 `num`，并按新类型重载参数槽与描述。
+- **返回** (`table` 或 `nil`)：新的条目信息。
+
+#### `te_set_event_param(slot, value)` / `te_set_action_param(slot, value)`
+- **说明**：直接写入当前选中事件/行为第 `slot` 个参数槽的裸值，并触发参数联动（可能影响其它参数槽的选项）。
+- **返回** (`table` 或 `nil`)：含 `value`, `display`。
+
+#### `te_set_event_param_fuzzy(slot, text)` / `te_set_action_param_fuzzy(slot, text)`
+- **说明**：按文本模糊匹配设置当前选中事件/行为第 `slot` 个参数槽的选项（见上文匹配规则）。
+- **返回** (`table` 或 `nil`)：含匹配到的 `value`, `display`。
+
+#### `te_add_event()` / `te_add_action()`
+- **说明**：在当前选中触发末尾新增一个事件/行为。
+- **返回** (`boolean`)：是否成功。
+
+#### `te_clone_event(idx)` / `te_clone_action(idx)`
+- **说明**：克隆第 `idx`（从 1 开始）个事件/行为。
+- **返回** (`boolean`)：是否成功。
+
+#### `te_delete_event(idx)` / `te_delete_action(idx)`
+- **说明**：删除第 `idx`（从 1 开始）个事件/行为（自动跳过删除确认框）。
+- **返回** (`boolean`)：是否成功。
+
+**示例**：查询所有含“生产”的事件类型。
+```lua
+for i, t in ipairs(te_get_event_types("生产")) do
+    print(t.num, t.name)
+end
+```
+
+**示例**：按名称模糊设置某触发第一个行为的第一个参数。
+```lua
+te_select_trigger("00000000-TR")
+te_select_action(1)
+local r = te_set_action_param_fuzzy(1, "美国")
+if r == nil then print("未找到匹配选项") end
 ```
 
 ---
@@ -2138,6 +2321,273 @@ task:apply()
   - `value` (`int`) — 默认值。
 - **返回** (`int`)：从 0 开始的新变量的索引。
 
+---
+
+## 十八、地形生成器 (`terrain_generator`)
+
+地形生成器类封装了 CTerrainGenerator 窗口的全部功能：预设的加载、保存与管理，以及对指定区域或多选区域的地形、覆盖物、地形对象、污染和斜坡的随机生成。实例自带独立的预设数据（读取/写入程序目录下的 `TerrainGenerator.ini`），与地形生成器窗口是否打开无关。
+
+### 构造函数
+
+#### `terrain_generator:new()`
+- **说明**：创建地形生成器实例，并自动从 `TerrainGenerator.ini` 加载与当前地图类型（Theater）匹配的预设（与地形生成器窗口一致，只载入 `Theaters` 包含当前地图类型的预设）。
+- **返回** (`terrain_generator`)：地形生成器实例。
+- **示例**：`local tg = terrain_generator:new()`
+
+### 成员
+
+| 成员 | 类型 | 读写 | 说明 |
+|------|------|------|------|
+| `override` | `boolean` | 读/写 | 应用前先清除区域内的对应对象（等价窗口的 Override 勾选） |
+| `ignore_landtypes` | `boolean` | 读/写 | 生成时忽略地表类型限制（等价窗口的 IgnoreLandtypes 勾选） |
+
+### 预设管理
+
+#### `list()`
+- **说明**：列出所有已加载预设（仅包含与当前地图类型匹配的预设）。每个元素为包含 `id`、`name`、`theaters` 字段的表。
+- **返回** (`table<table>`)：预设信息数组，如 `{{id="000", name="地表美化01", theaters={"TEMPERATE"}}, ...}`。
+- **示例**：
+```lua
+local tg = terrain_generator:new()
+for i, p in ipairs(tg:list()) do
+    print(p.id .. " - " .. p.name .. " [" .. table.concat(p.theaters, ",") .. "]")
+end
+```
+
+#### `load(id)`
+- **说明**：按 ID 载入预设，使其成为当前预设。仅能载入已加载（与当前地图类型匹配）的预设。
+- **参数**：`id` (`string`) — 预设 ID（如 `"001"`）。
+- **返回** (`boolean`)：是否加载成功。
+- **示例**：`tg:load("001")`
+
+#### `get_id()`
+- **说明**：返回当前预设的 ID。
+- **返回** (`string`)：当前预设 ID；未载入时返回空字符串。
+
+#### `get_name()`
+- **说明**：返回当前预设的名称。
+- **返回** (`string`)：当前预设名称。
+
+#### `get_theaters()`
+- **说明**：返回当前预设适用的地图类型列表。
+- **返回** (`table<string>`)：地图类型数组，如 `{"TEMPERATE","URBAN"}`。
+
+#### `add(name)`
+- **说明**：新建一个预设（自动分配首个空闲的 3 位数字 ID），并使其成为当前预设。
+- **参数**：`name` (`string`) — 新预设名称。
+- **返回** (`string`)：新预设的 ID。
+
+#### `copy(id)`
+- **说明**：复制指定预设（新 ID，名称追加“Copy”），并使其成为当前预设。
+- **参数**：`id` (`string`) — 源预设 ID。
+- **返回** (`string`)：新预设的 ID；源预设不存在时返回空字符串。
+
+#### `remove(id)`
+- **说明**：从 `TerrainGenerator.ini` 中删除指定预设。
+- **参数**：`id` (`string`) — 预设 ID。
+- **返回** (`boolean`)：是否删除成功。
+
+#### `save()`
+- **说明**：把当前预设的全部参数写入 `TerrainGenerator.ini` 并落盘。修改预设参数后调用此方法保存。
+- **返回**：无。
+
+> 提示：`save()`、`add()`、`copy()`、`remove()` 写盘后，若地形生成器窗口已打开，会自动刷新窗口中的预设列表，无需手动刷新。
+
+#### `reload()`
+- **说明**：重新从磁盘加载 `TerrainGenerator.ini` 中与当前地图类型匹配的预设（放弃未保存的修改）。
+- **返回**：无。
+
+### 应用生成
+
+#### `apply(x1, y1, x2, y2)`
+- **说明**：把当前预设应用到指定矩形区域（坐标范围闭合，即包含 x2,y2）。生成行为与窗口的 Apply 按钮一致，包含撤销记录。
+- **参数**：`x1, y1, x2, y2` (`number`) — 区域坐标（单元格坐标）。
+- **返回**：无。
+
+#### `apply_selection()`
+- **说明**：把当前预设应用到地图上当前多选选中的单元格（只作用于选中格，等价窗口的多选应用）。
+- **返回**：无。没有多选区域时输出提示并返回。
+
+#### `clear(x1, y1, x2, y2, [clear_type = -1])`
+- **说明**：清除指定矩形区域内当前预设所包含类别的对象（等价窗口的 Clear 按钮）。
+- **参数**：
+  - `x1, y1, x2, y2` (`number`) — 区域坐标。
+  - `clear_type` (`int`, 可选) — 只清除指定类别：`-1` 全部，`0` 地形，`1` 地形对象，`2` 覆盖物，`3` 污染。默认为 `-1`。
+- **返回**：无。
+
+#### `clear_selection([clear_type = -1])`
+- **说明**：清除当前多选区域内当前预设所包含类别的对象。
+- **参数**：
+  - `clear_type` (`int`, 可选) — 只清除指定类别：`-1` 全部，`0` 地形，`1` 地形对象，`2` 覆盖物，`3` 污染。默认为 `-1`。
+- **返回**：无。
+
+### 预设参数设置
+
+以下方法均修改当前预设，修改后需调用 `save()` 落盘。组索引从 0 开始，最多 9 组（与 ini 键 `TileSet0~9`、`TerrainType0~9`、`Overlay0~9`、`Smudge0~9` 对应）。添加新组时 `index` 必须等于当前组数；修改已有组时 `index` 为其下标。
+
+#### `set_name(name)`
+- **说明**：设置当前预设名称。
+- **参数**：`name` (`string`) — 名称。
+- **返回**：无。
+
+#### `set_scale(scale)`
+- **说明**：设置地块精细度（数值越小地块越碎，推荐 30 左右）。
+- **参数**：`scale` (`int`) — 精细度。
+- **返回**：无。
+
+#### `set_theaters(theaters)`
+- **说明**：设置适用的地图类型（Theater）列表。
+- **参数**：`theaters` (`table<string>`) — 地图类型名数组，如 `{"TEMPERATE","URBAN"}`。
+- **返回**：无。
+
+#### `set_tileset(index, tileset, chance, [available_indexes])`
+- **说明**：设置地形组。`tileset` 为地形组编号（0~9999 内为游戏内地形组，>=10000 为自定义地形组）；`available_indexes` 为可选的地形相对索引列表（相对于该地形组起始索引），不提供则使用该地形组全部可用地形。
+- **参数**：
+  - `index` (`int`) — 组索引（0~9）。
+  - `tileset` (`int`) — 地形组编号。
+  - `chance` (`number`) — 生成权重（浮点数，0 表示不使用）。
+  - `available_indexes` (`string`, 可选) — 逗号或空格分隔的相对索引，如 `"0,2,4"`。
+- **返回**：无。
+
+#### `remove_tileset(index)`
+- **说明**：删除指定地形组。
+- **参数**：`index` (`int`) — 组索引。
+- **返回**：无。
+
+#### `set_terrain(index, items, chance)`
+- **说明**：设置地形对象组。
+- **参数**：
+  - `index` (`int`) — 组索引（0~9）。
+  - `items` (`table<string>`) — 地形对象类型 ID 数组，如 `{"TREE0","TREE1"}`。
+  - `chance` (`number`) — 生成权重。
+- **返回**：无。
+
+#### `remove_terrain(index)`
+- **说明**：删除指定地形对象组。
+- **参数**：`index` (`int`) — 组索引。
+- **返回**：无。
+
+#### `set_overlay(index, overlays, chance, [available_data])`
+- **说明**：设置覆盖物组。`available_data` 为可选的覆盖物图像数据索引列表（逗号或空格分隔），不提供则使用全部可用图像。
+- **参数**：
+  - `index` (`int`) — 组索引（0~9）。
+  - `overlays` (`table<int>`) — 覆盖物类型索引数组。
+  - `chance` (`number`) — 生成权重。
+  - `available_data` (`string`, 可选) — 允许的图像数据索引，如 `"0,1,2"`。
+- **返回**：无。
+
+#### `remove_overlay(index)`
+- **说明**：删除指定覆盖物组。
+- **参数**：`index` (`int`) — 组索引。
+- **返回**：无。
+
+#### `set_smudge(index, items, chance)`
+- **说明**：设置污染组。
+- **参数**：
+  - `index` (`int`) — 组索引（0~9）。
+  - `items` (`table<string>`) — 污染类型 ID 数组，如 `{"CRATER1","CRATER2"}`。
+  - `chance` (`number`) — 生成权重。
+- **返回**：无。
+
+#### `remove_smudge(index)`
+- **说明**：删除指定污染组。
+- **参数**：`index` (`int`) — 组索引。
+- **返回**：无。
+
+#### `set_ramp(percent, min_height, max_height)`
+- **说明**：启用斜坡（坡度）模式并设置参数。三项参数必须均为非负值才启用；应用时会在区域内按连通块生成渐变高度。
+- **参数**：
+  - `percent` (`int`) — 粗糙度百分比（0~100）。
+  - `min_height` (`int`) — 最低高度（0~13）。
+  - `max_height` (`int`) — 最高高度（1~14）。
+- **返回**：无。
+
+#### `disable_ramp()`
+- **说明**：关闭斜坡模式。
+- **返回**：无。
+
+#### `set_preserve_anchor_heights(preserve)`
+- **说明**：设置斜坡生成时是否保留锚点高度。
+- **参数**：`preserve` (`boolean`) — 是否保留。
+- **返回**：无。
+
+#### `set_avoid_nonmorphable_tiles(avoid)`
+- **说明**：设置斜坡生成时是否避开不可变形的地形块。
+- **参数**：`avoid` (`boolean`) — 是否避开。
+- **返回**：无。
+
+### 斜坡锚点
+
+锚点为全局状态（与地形生成器窗口共用）。锚点用于在斜坡生成时固定某些顶点的高度。
+
+> 提示：创建 `terrain_generator` 实例时会记录全局锚点集合，实例销毁（Lua 垃圾回收）时自动还原，脚本中的锚点操作不会残留到全局状态。
+
+#### `get_anchors()`
+- **说明**：返回当前所有锚点。
+- **返回** (`table<table>`)：锚点数组，每个元素为 `{x=..., y=..., height=...}`，如 `{{x=78, y=78, height=10}, ...}`。
+
+#### `add_anchor(x, y, height)`
+- **说明**：在指定坐标放置一个高度锚点。
+- **参数**：
+  - `x, y` (`int`) — 坐标。
+  - `height` (`int`) — 锚点高度。
+- **返回**：无。
+
+#### `remove_anchor(x, y)`
+- **说明**：删除指定坐标的锚点。
+- **参数**：`x, y` (`int`) — 坐标。
+- **返回**：无。
+
+#### `clear_anchors()`
+- **说明**：清空全部锚点。
+- **返回**：无。
+
+### 查询
+
+| 方法 | 返回类型 | 说明 |
+|------|----------|------|
+| `get_scale()` | `int` | 当前预设的精细度 |
+| `get_tileset_list()` | `table<int>` | 当前预设各地形组的地形组编号 |
+| `get_tileset_chances()` | `table<number>` | 当前预设各地形组的权重 |
+| `get_ramp_percent()` | `int` | 斜坡粗糙度（未启用斜坡时为 -1） |
+| `get_ramp_min_height()` | `int` | 斜坡最低高度（未启用斜坡时为 -1） |
+| `get_ramp_max_height()` | `int` | 斜坡最高高度（未启用斜坡时为 -1） |
+
+### 典型用法
+
+**加载已有预设并应用到区域**：
+```lua
+local tg = terrain_generator:new()
+if tg:load("001") then
+    tg:apply(5, 5, 20, 20)   -- 对矩形区域生成
+    tg:apply_selection()     -- 对当前多选区域生成
+end
+```
+
+**新建预设、设置参数并应用**：
+```lua
+local tg = terrain_generator:new()
+local id = tg:add("沙漠地形")
+tg:set_scale(30)
+tg:set_tileset(0, 41, 100, "0")        -- 地形组 0，仅用第一个地形
+tg:set_overlay(0, {0}, 50)             -- 覆盖物类型 0，权重 50
+tg:set_smudge(0, {"CRATER01", "CRATER02"}, 30)
+tg:set_ramp(30, 2, 8)                  -- 启用斜坡
+tg:add_anchor(10, 10, 6)               -- 固定 (10,10) 顶点高度为 6
+tg:apply(10, 10, 30, 30)
+tg:save()                              -- 保存预设到 ini
+```
+
+**清除区域内容**：
+```lua
+local tg = terrain_generator:new()
+tg:load("001")
+tg:clear(5, 5, 20, 20)      -- 清除区域内对象
+tg:clear_selection()        -- 清除多选区域内对象
+```
+
+**注意**：`list()` 返回每个预设的 `id`（如 `"001"`），载入时使用 `tg:load(p.id)`。与地形生成器窗口一致，只有 `Theaters` 包含当前地图类型的预设才会被加载；其他地图类型的预设需切换地图后使用。若地形生成器窗口正处于打开状态，两者的预设数据以 `TerrainGenerator.ini` 文件为同步点。
+
 ## 附录
 
 ### A. `message_box` 格式码
@@ -2212,4 +2662,5 @@ task:apply()
 | `"INFANTRY"` | 地图内步兵索引 |
 | `"UNIT"` | 地图内车辆索引 |
 | `"STRUCTURE"` | 地图内建筑索引 |
+| `"SCENARIO"` | 地图文件名 |
 | 其他数字字符串 | FAData.ini 中 `[NewParamTypes]` 的键名 |

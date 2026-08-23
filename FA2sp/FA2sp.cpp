@@ -98,6 +98,7 @@ bool ExtConfigs::ForceNeutralSpecialColor;
 bool ExtConfigs::DrawCelltagTranslucent;
 bool ExtConfigs::ExtWaypoints;
 bool ExtConfigs::ExtFacings;
+bool ExtConfigs::ExtTilts;
 bool ExtConfigs::ExtFacings_Drag;
 bool ExtConfigs::ExtFacings_DragPreview;
 int ExtConfigs::UndoRedoLimit;
@@ -105,6 +106,7 @@ bool ExtConfigs::UndoRedo_ShiftPlaceTile;
 bool ExtConfigs::UndoRedo_RecordObjects;
 bool ExtConfigs::UndoRedo_HoldPlaceOverlay;
 bool ExtConfigs::UseRGBHouseColor;
+bool ExtConfigs::UnifyHouseColors;
 bool ExtConfigs::SaveMap_AutoSave;
 int ExtConfigs::SaveMap_AutoSave_Interval;
 int ExtConfigs::SaveMap_AutoSave_Interval_Real;
@@ -144,6 +146,7 @@ bool ExtConfigs::LoadRA2MixFilesOnly;
 bool ExtConfigs::ExtVariables;
 bool ExtConfigs::TestNotLoaded;
 bool ExtConfigs::CloneWithOrderedID;
+bool ExtConfigs::ConfirmDeleteSubEntries;
 bool ExtConfigs::InfantrySubCell_GameDefault;
 bool ExtConfigs::InfantrySubCell_Edit;
 bool ExtConfigs::InfantrySubCell_Edit_Single;
@@ -173,6 +176,7 @@ bool ExtConfigs::MultiSelect_ConsiderLAT;
 float ExtConfigs::MultiSelect_Opacity;
 bool ExtConfigs::FillArea_ConsiderLAT;
 bool ExtConfigs::FillArea_ConsiderWater;
+bool ExtConfigs::FillArea_ConsiderWholeTile;
 bool ExtConfigs::DPIAware;
 bool ExtConfigs::SkipBrushSizeChangeOnTools;
 bool ExtConfigs::RecordBrushSizeHistory;
@@ -284,6 +288,7 @@ void FA2sp::ExtConfigsInitialize()
 	ExtConfigs::TutorialTexts_Fix = CINI::FAData->GetBool("ExtConfigs", "TutorialTexts.Fix");
 	ExtConfigs::TutorialTexts_Viewer = CINI::FAData->GetBool("ExtConfigs", "TutorialTexts.Viewer");
 	ExtConfigs::CloneWithOrderedID = CINI::FAData->GetBool("ExtConfigs", "CloneWithOrderedID", true);
+	ExtConfigs::ConfirmDeleteSubEntries = CINI::FAData->GetBool("ExtConfigs", "ConfirmDelete.SubEntries");
 
 	ExtConfigs::SkipTipsOfTheDay = CINI::FAData->GetBool("ExtConfigs", "SkipTipsOfTheDay", false);
 
@@ -317,6 +322,7 @@ void FA2sp::ExtConfigsInitialize()
 	ExtConfigs::MultiSelect_Opacity = CINI::FAData->GetSingle("ExtConfigs", "MultiSelect.Opacity", 0.33f);
 	ExtConfigs::FillArea_ConsiderLAT = CINI::FAData->GetBool("ExtConfigs", "FillArea.ConsiderLAT", true);
 	ExtConfigs::FillArea_ConsiderWater = CINI::FAData->GetBool("ExtConfigs", "FillArea.ConsiderWater", true);
+	ExtConfigs::FillArea_ConsiderWholeTile = CINI::FAData->GetBool("ExtConfigs", "FillArea.ConsiderWholeTile", true);
 	ExtConfigs::ForceNeutralSpecialColor = CINI::FAData->GetBool("ExtConfigs", "ForceNeutralSpecialColor", true);
 
 	ExtConfigs::DPIAware = CINI::FAData->GetBool("ExtConfigs", "DPIAware");
@@ -360,6 +366,7 @@ void FA2sp::ExtConfigsInitialize()
 	ExtConfigs::DrawCelltagTranslucent = CINI::FAData->GetBool("ExtConfigs", "DrawCelltagTranslucent");
 	ExtConfigs::ExtWaypoints = CINI::FAData->GetBool("ExtConfigs", "ExtWaypoints");
 	ExtConfigs::ExtFacings = CINI::FAData->GetBool("ExtConfigs", "ExtFacings");
+	ExtConfigs::ExtTilts = CINI::FAData->GetBool("ExtConfigs", "ExtTilts");
 	ExtConfigs::ExtFacings_Drag = CINI::FAData->GetBool("ExtConfigs", "ExtFacings.Drag");
 	ExtConfigs::ExtFacings_DragPreview = CINI::FAData->GetBool("ExtConfigs", "ExtFacings.DragPreview", true);
 	ExtConfigs::ExtVariables = CINI::FAData->GetBool("ExtConfigs", "ExtVariables");
@@ -429,6 +436,7 @@ void FA2sp::ExtConfigsInitialize()
 	ExtConfigs::UndoRedo_RecordObjects = CINI::FAData->GetBool("ExtConfigs", "UndoRedo.RecordObjects", true);
 
 	ExtConfigs::UseRGBHouseColor = CINI::FAData->GetBool("ExtConfigs", "UseRGBHouseColor");
+	ExtConfigs::UnifyHouseColors = CINI::FAData->GetBool("ExtConfigs", "UnifyHouseColors");
 	ExtConfigs::INIEditor_IgnoreTeams = CINI::FAData->GetBool("ExtConfigs", "INIEditor.IgnoreTeams");
 	// ExtConfigs::StringBufferStackAllocation = CINI::FAData->GetBool("ExtConfigs", "StringBufferStackAllocation", true);
 
@@ -709,6 +717,12 @@ void ExtConfigs::UpdateOptionTranslations()
 		.Type = ExtConfigs::SpecialOptionType::None});
 
 	ExtConfigs::Options.push_back(ExtConfigs::DynamicOptions{
+		.DisplayName = Translations::TranslateOrDefault("Options.ConfirmDelete.SubEntries", "Ask for confirmation when deleting sub-entries of triggers/scripts, etc."),
+		.IniKey = "ConfirmDelete.SubEntries",
+		.Value = &ExtConfigs::ConfirmDeleteSubEntries,
+		.Type = ExtConfigs::SpecialOptionType::None});
+
+	ExtConfigs::Options.push_back(ExtConfigs::DynamicOptions{
 		.DisplayName = Translations::TranslateOrDefault("Options.UseSequentialIndexing", "Always assign the next incremental index when creating triggers and teams"),
 		.IniKey = "UseSequentialIndexing",
 		.Value = &ExtConfigs::UseSequentialIndexing,
@@ -975,6 +989,12 @@ void ExtConfigs::UpdateOptionTranslations()
 		.Type = ExtConfigs::SpecialOptionType::ReloadMap});
 
 	ExtConfigs::Options.push_back(ExtConfigs::DynamicOptions{
+		.DisplayName = Translations::TranslateOrDefault("Options.UnifyHouseColors", "Map house color variants to their corresponding solid colors"),
+		.IniKey = "UnifyHouseColors",
+		.Value = &ExtConfigs::UnifyHouseColors,
+		.Type = ExtConfigs::SpecialOptionType::ReloadMap});
+
+	ExtConfigs::Options.push_back(ExtConfigs::DynamicOptions{
 		.DisplayName = Translations::TranslateOrDefault("Options.RandomTerrainObjects", "Show all terrain objects in random tree dialog"),
 		.IniKey = "RandomTerrainObjects",
 		.Value = &ExtConfigs::RandomTerrainObjects,
@@ -1132,6 +1152,12 @@ void ExtConfigs::UpdateOptionTranslations()
 		.Type = ExtConfigs::SpecialOptionType::None});
 
 	ExtConfigs::Options.push_back(ExtConfigs::DynamicOptions{
+		.DisplayName = Translations::TranslateOrDefault("Options.FillArea.ConsiderWholeTile", "Consider sub tile blocks as identical when ctrl-filling areas"),
+		.IniKey = "FillArea.ConsiderWholeTile",
+		.Value = &ExtConfigs::FillArea_ConsiderWholeTile,
+		.Type = ExtConfigs::SpecialOptionType::None});
+
+	ExtConfigs::Options.push_back(ExtConfigs::DynamicOptions{
 		.DisplayName = Translations::TranslateOrDefault("Options.UndoRedo.ShiftPlaceTile", "Only record one history when shift placing tiles"),
 		.IniKey = "UndoRedo.ShiftPlaceTile",
 		.Value = &ExtConfigs::UndoRedo_ShiftPlaceTile,
@@ -1240,7 +1266,14 @@ void ExtConfigs::UpdateOptionTranslations()
 		.IniKey = "ExtFacings.DragPreview",
 		.Value = &ExtConfigs::ExtFacings_DragPreview,
 		.Type = ExtConfigs::SpecialOptionType::None});
+		
+	ExtConfigs::Options.push_back(ExtConfigs::DynamicOptions{
+		.DisplayName = Translations::TranslateOrDefault("Options.ExtTilts", "Allow vehicles and aircraft to tilt on slopes"),
+		.IniKey = "ExtTilts",
+		.Value = &ExtConfigs::ExtTilts,
 
+		.Type = ExtConfigs::SpecialOptionType::ReloadMap});
+	
 	ExtConfigs::Options.push_back(ExtConfigs::DynamicOptions{
 		.DisplayName = Translations::TranslateOrDefault("Options.ExtMixLoader", "Enable new mix loader"),
 		.IniKey = "ExtMixLoader",

@@ -16,12 +16,13 @@ public:
 	{
 		TilesetBrowser = 0,
 		GridObjectViewer = 1,
-		TriggerSort = 2,
-		TagSort = 3,
-		TeamSort = 4,
-		TaskforceSort = 5,
-		ScriptSort = 6,
-		WaypointSort = 7,
+		MapObjectList = 2,
+		TriggerSort = 3,
+		TagSort = 4,
+		TeamSort = 5,
+		TaskforceSort = 6,
+		ScriptSort = 7,
+		WaypointSort = 8,
 	};
 
 	//
@@ -41,6 +42,7 @@ public:
 	void OnBNSearchClicked();
 	void OnBNTerrainGeneratorClicked();
     static void RefreshWindows();
+    static void RefreshAllTabs();
 
 	void InitTabControl();
 
@@ -50,6 +52,7 @@ public:
 	static CTerrainGenerator m_terrainGenerator;
 	static HWND hTabCtrl;
     static bool TerrainDlgLoaded;
+    static bool RefreshPending;
     static CTileSetBrowserView* TileSetBrowserView_Instance;
     static float TileSetBrowserViewScaledFactor;
     static float OverlayBrowserViewScaledFactor;

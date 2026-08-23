@@ -42,10 +42,14 @@ HWND CNewTeamTypes::hVeteranLevel;
 HWND CNewTeamTypes::hPriority;
 HWND CNewTeamTypes::hMax;
 HWND CNewTeamTypes::hTechlevel;
+HWND CNewTeamTypes::hParaDropPlane;
 HWND CNewTeamTypes::hTransportWaypoint;
 HWND CNewTeamTypes::hGroup;
 HWND CNewTeamTypes::hWaypoint;
 HWND CNewTeamTypes::hMindControlDecision;
+HWND CNewTeamTypes::hSetRecruitOnLiber;
+HWND CNewTeamTypes::hTooltipSetRecruitOnLiber;
+HWND CNewTeamTypes::hTooltipParaDropPlane;
 HWND CNewTeamTypes::hCheckBoxLoadable;
 HWND CNewTeamTypes::hCheckBoxFull;
 HWND CNewTeamTypes::hCheckBoxAnnoyance;
@@ -82,8 +86,12 @@ VirtualComboBoxEx CNewTeamTypes::vcbScript;
 VirtualComboBoxEx CNewTeamTypes::vcbTag;
 VirtualComboBoxEx CNewTeamTypes::vcbHouse;
 VirtualComboBoxEx CNewTeamTypes::vcbWaypoint;
+VirtualComboBoxEx CNewTeamTypes::vcbParaDropPlane;
 VirtualComboBoxEx CNewTeamTypes::vcbTransportWaypoint;
 std::vector<FString> CNewTeamTypes::mindControlDecisions;
+std::vector<FString> CNewTeamTypes::setRecruitOnLiberOptions;
+TooltipHelper CNewTeamTypes::tooltipSetRecruitOnLiber;
+TooltipHelper CNewTeamTypes::tooltipParaDropPlane;
 WNDPROC CNewTeamTypes::OrigDragDotProc;
 WNDPROC CNewTeamTypes::OrigDragingDotProc;
 bool CNewTeamTypes::m_dragging = false;
@@ -141,10 +149,12 @@ void CNewTeamTypes::Initialize(HWND& hWnd)
 	Translate(50209, "TeamTypesLabelPriority");
 	Translate(50210, "TeamTypesLabelMax");
 	Translate(50211, "TeamTypesLabelTechlevel");
+    Translate(1146, "TeamTypesLabelTransportPlane");
 	Translate(1413 , "TeamTypesLabelTransportWaypoint");
 	Translate(50212, "TeamTypesLabelGroup");
 	Translate(50213, "TeamTypesLabelWaypoint");
 	Translate(1446, "TeamTypesLabelMindControlDecision");
+	Translate(1141, "TeamTypesLabelSetRecruitOnLiber");
 	Translate(1113, "TeamTypesCheckBoxLoadable");
 	Translate(1114, "TeamTypesCheckBoxFull");
 	Translate(1115, "TeamTypesCheckBoxAnnoyance");
@@ -165,6 +175,7 @@ void CNewTeamTypes::Initialize(HWND& hWnd)
 	Translate(1137, "TeamTypesCheckBoxAreTeamMembersRecruitable");
 	Translate(1138, "TeamTypesCheckBoxIsBaseDefense");
 	Translate(1139, "TeamTypesCheckBoxOnlyTargetHouseEnemy"); 
+	Translate(1146, "TeamTypesParaDropPlane"); 
     Translate(1999, "SearchReferenceTitle");
 
     hSelectedTeam = GetDlgItem(hWnd, Controls::SelectedTeam);
@@ -180,10 +191,14 @@ void CNewTeamTypes::Initialize(HWND& hWnd)
     hPriority = GetDlgItem(hWnd, Controls::Priority);
     hMax = GetDlgItem(hWnd, Controls::Max);
     hTechlevel = GetDlgItem(hWnd, Controls::Techlevel);
+    hParaDropPlane = GetDlgItem(hWnd, Controls::ParaDropPlane);
     hTransportWaypoint = GetDlgItem(hWnd, Controls::TransportWaypoint);
     hGroup = GetDlgItem(hWnd, Controls::Group);
     hWaypoint = GetDlgItem(hWnd, Controls::Waypoint);
     hMindControlDecision = GetDlgItem(hWnd, Controls::MindControlDecision);
+    hSetRecruitOnLiber = GetDlgItem(hWnd, Controls::SetRecruitOnLiber);
+    hTooltipSetRecruitOnLiber = GetDlgItem(hWnd, Controls::TooltipSetRecruitOnLiber);
+    hTooltipParaDropPlane = GetDlgItem(hWnd, Controls::TooltipParaDropPlane);
     hCheckBoxLoadable = GetDlgItem(hWnd, Controls::CheckBoxLoadable);
     hCheckBoxFull = GetDlgItem(hWnd, Controls::CheckBoxFull);
     hCheckBoxAnnoyance = GetDlgItem(hWnd, Controls::CheckBoxAnnoyance);
@@ -218,6 +233,27 @@ void CNewTeamTypes::Initialize(HWND& hWnd)
     mindControlDecisions.push_back(FString("4 - ") + Translations::TranslateOrDefault("MindControlDecisions.4", "Assign to hunt"));
     mindControlDecisions.push_back(FString("5 - ") + Translations::TranslateOrDefault("MindControlDecisions.5", "Do nothing"));
 
+    setRecruitOnLiberOptions.clear();
+    setRecruitOnLiberOptions.push_back(FString("-1 - ") + Translations::TranslateOrDefault("SetRecruitOnLiber.-1", "Don't use this logic"));
+    setRecruitOnLiberOptions.push_back(FString("0 - ") + Translations::TranslateOrDefault("SetRecruitOnLiber.0", "Marked as not recruitable"));
+    setRecruitOnLiberOptions.push_back(FString("1 - ") + Translations::TranslateOrDefault("SetRecruitOnLiber.1", "Marked as recruitable"));
+
+    if (hTooltipSetRecruitOnLiber)
+        tooltipSetRecruitOnLiber.Attach(hTooltipSetRecruitOnLiber,
+            Translations::TranslateOrDefault("TeamTypesTooltipSetRecruitOnLiber",
+                "(Phobos v0.5-alpha+) In vanilla, when a unit is added to a team, "
+                "its RecruitableB flag is overwritten by "
+                "the team's AreTeamMembersRecruitable setting. "
+                "When the unit is liberated from the team, "
+                "the flag is not restored. "
+                "This setting allows a team to reset this flag when liberating its members. "
+                "Default [General]->SetRecruitableOnLiberate."));
+
+    if (hTooltipParaDropPlane)
+        tooltipParaDropPlane.Attach(hTooltipParaDropPlane,
+            Translations::TranslateOrDefault("TeamTypesTooltipParaDropPlane",
+                "(Phobos v0.6-alpha+) Customized transport plane for teams with Droppod=yes"));
+
     ExtraWindow::RegisterDropTarget(hTaskforce, DropType::TeamEditorTaskForce);
     ExtraWindow::RegisterDropTarget(hScript, DropType::TeamEditorScript);
     ExtraWindow::RegisterDropTarget(hTag, DropType::TeamEditorTag);
@@ -232,11 +268,15 @@ void CNewTeamTypes::Initialize(HWND& hWnd)
 
     vcbSelectedTeam.Attach(hSelectedTeam, &ExtConfigs::SortByLabelName_Team, false);
     vcbTaskForce.Attach(hTaskforce);
+    vcbTaskForce.SetPreFilterCallback([]() { RebuildTaskforceList(); });
     vcbScript.Attach(hScript);
+    vcbScript.SetPreFilterCallback([]() { RebuildScriptList(); });
     vcbTag.Attach(hTag);
+    vcbTag.SetPreFilterCallback([]() { RebuildTagList(); });
     vcbHouse.Attach(hHouse);
     vcbWaypoint.Attach(hWaypoint);
     vcbWaypoint.SetAutoSearchRestriction(&ExtConfigs::SearchCombobox_Waypoint);
+    vcbParaDropPlane.Attach(hParaDropPlane);
     vcbTransportWaypoint.Attach(hTransportWaypoint);
     vcbTransportWaypoint.SetAutoSearchRestriction(&ExtConfigs::SearchCombobox_Waypoint);
 
@@ -325,8 +365,6 @@ void CNewTeamTypes::Update(HWND& hWnd)
     ExtraWindow::ClearComboKeepText(hWaypoint);
     ExtraWindow::ClearComboKeepText(hTransportWaypoint);
     vcbTransportWaypoint.AddString("None");
-
-
     if (auto pSection = CINI::CurrentDocument->GetSection("Waypoints"))
     {
         FString output;
@@ -341,6 +379,22 @@ void CNewTeamTypes::Update(HWND& hWnd)
             vcbWaypoint.AddString(output);
         }
     }
+    
+    ExtraWindow::ClearComboKeepText(hParaDropPlane);
+    vcbParaDropPlane.AddString("None");
+    std::vector<FString> aircrafts;
+    for (auto& [key, value] : Variables::RulesMap.GetSection("AircraftTypes"))
+    {
+        aircrafts.push_back(value);
+    } 
+    ExtraWindow::SortRawStrings(aircrafts);
+    for (auto& aircraft : aircrafts)
+    {
+        FString uiname = CViewObjectsExt::QueryUIName(aircraft, true);
+        if(uiname != aircraft)
+            uiname.Format("%s - %s", aircraft, uiname);
+        vcbParaDropPlane.AddString(uiname);
+    }
 
     ExtraWindow::ClearComboKeepText(hGroup);
     SendMessage(hGroup, CB_ADDSTRING, 0, (LPARAM)(LPCSTR)"-1");
@@ -348,6 +402,11 @@ void CNewTeamTypes::Update(HWND& hWnd)
     ExtraWindow::ClearComboKeepText(hMindControlDecision);
     for (auto& decision : mindControlDecisions)
         SendMessage(hMindControlDecision, CB_ADDSTRING, 0, (LPARAM)(LPCSTR)decision);
+
+    ExtraWindow::ClearComboKeepText(hSetRecruitOnLiber);
+    for (auto& option : setRecruitOnLiberOptions)
+        SendMessage(hSetRecruitOnLiber, CB_ADDSTRING, 0, (LPARAM)(LPCSTR)option);
+    ExtraWindow::AdjustDropdownWidth(hSetRecruitOnLiber);
 
     OnSelchangeTeamtypes();
 }
@@ -424,8 +483,11 @@ LRESULT CALLBACK CNewTeamTypes::DragDotProc(HWND hWnd, UINT message, WPARAM wPar
                     InvalidateRect(hDragPoint, nullptr, TRUE);
                     vcbSelectedTeam.SetItemColors(SelectedTeamIndex, cc.rgbResult);           
                     CNewAITrigger::TeamListChanged = true;
-                    CNewTrigger::Instance[0].TeamListChanged = true;
-                    CNewTrigger::Instance[1].TeamListChanged = true; 
+                    for (int i = 0; i < TRIGGER_EDITOR_MAX_COUNT; ++i)
+                    {
+                        if (CNewTrigger::Instance[i].GetHandle())
+                            CNewTrigger::Instance[i].TeamListChanged = true;
+                    }
                 }
 			}     
             return 0;
@@ -862,8 +924,11 @@ BOOL CALLBACK CNewTeamTypes::DlgProc(HWND hWnd, UINT Msg, WPARAM wParam, LPARAM 
                 map.WriteString(CurrentTeamID, "Name", buffer);
 
                 CNewAITrigger::TeamListChanged = true;
-                CNewTrigger::Instance[0].TeamListChanged = true;
-                CNewTrigger::Instance[1].TeamListChanged = true;
+                for (int i = 0; i < TRIGGER_EDITOR_MAX_COUNT; ++i)
+                {
+                    if (CNewTrigger::Instance[i].GetHandle())
+                        CNewTrigger::Instance[i].TeamListChanged = true;
+                }
 
                 FString name = ExtraWindow::FormatTriggerDisplayName(CurrentTeamID, buffer);
 
@@ -882,7 +947,7 @@ BOOL CALLBACK CNewTeamTypes::DlgProc(HWND hWnd, UINT Msg, WPARAM wParam, LPARAM 
                 OnSelchangeTaskForce();
             else if (CODE == CBN_EDITCHANGE)
                 OnSelchangeTaskForce(true);
-            else if (CODE == CBN_DROPDOWN && TaskforceListChanged)
+            else if (CODE == CBN_DROPDOWN && TaskforceListChanged && !vcbTaskForce.IsProgrammaticDropdown())
                 OnDropdownTaskForce();
             break;
         case Controls::Script:
@@ -890,7 +955,7 @@ BOOL CALLBACK CNewTeamTypes::DlgProc(HWND hWnd, UINT Msg, WPARAM wParam, LPARAM 
                 OnSelchangeScript();
             else if (CODE == CBN_EDITCHANGE)
                 OnSelchangeScript(true);
-            else if (CODE == CBN_DROPDOWN && ScriptListChanged)
+            else if (CODE == CBN_DROPDOWN && ScriptListChanged && !vcbScript.IsProgrammaticDropdown())
                 OnDropdownScript();
             break;
         case Controls::Tag:
@@ -898,7 +963,7 @@ BOOL CALLBACK CNewTeamTypes::DlgProc(HWND hWnd, UINT Msg, WPARAM wParam, LPARAM 
                 OnSelchangeTag();
             else if (CODE == CBN_EDITCHANGE)
                 OnSelchangeTag(true);
-            else if (CODE == CBN_DROPDOWN && TagListChanged)
+            else if (CODE == CBN_DROPDOWN && TagListChanged && !vcbTag.IsProgrammaticDropdown())
                 OnDropdownTag();
             break;
         case Controls::TransportWaypoint:
@@ -907,7 +972,13 @@ BOOL CALLBACK CNewTeamTypes::DlgProc(HWND hWnd, UINT Msg, WPARAM wParam, LPARAM 
             else if (CODE == CBN_EDITCHANGE || CODE == CBN_CLOSEUP)
                 OnSelchangeTransportWaypoint(hWnd, true);
             break;
-        case Controls::Waypoint :
+        case Controls::ParaDropPlane:
+            if (CODE == CBN_SELCHANGE)
+                OnSelchangeParaDropPlane();
+            else if (CODE == CBN_EDITCHANGE || CODE == CBN_CLOSEUP)
+                OnSelchangeParaDropPlane(true);
+            break;
+        case Controls::Waypoint:
             if (CODE == CBN_SELCHANGE)
                 OnSelchangeWaypoint(hWnd);
             else if (CODE == CBN_EDITCHANGE || CODE == CBN_CLOSEUP)
@@ -930,6 +1001,12 @@ BOOL CALLBACK CNewTeamTypes::DlgProc(HWND hWnd, UINT Msg, WPARAM wParam, LPARAM 
                 OnSelchangeMindControlDecision(hWnd);
             else if (CODE == CBN_EDITCHANGE || CODE == CBN_CLOSEUP)
                 OnSelchangeMindControlDecision(hWnd, true);
+            break;
+        case Controls::SetRecruitOnLiber:
+            if (CODE == CBN_SELCHANGE)
+                OnSelchangeSetRecruitOnLiber(hWnd);
+            else if (CODE == CBN_EDITCHANGE || CODE == CBN_CLOSEUP)
+                OnSelchangeSetRecruitOnLiber(hWnd, true);
             break;
         case Controls::Group:
             if (CODE == CBN_SELCHANGE)
@@ -1079,6 +1156,22 @@ BOOL CALLBACK CNewTeamTypes::DlgProc(HWND hWnd, UINT Msg, WPARAM wParam, LPARAM 
     return FALSE;
 }
 
+void CNewTeamTypes::OnSelchangeParaDropPlane(bool edited)
+{
+    if (SelectedTeamIndex < 0)
+        return;
+
+    FString text = vcbParaDropPlane.GetSelectedText(edited);
+    FString::TrimIndex(text);
+    if (text == "None")
+        text = "";
+
+    if (text.IsEmpty())
+        map.DeleteKey(CurrentTeamID, "ParaDropAircraft");
+    else
+        map.WriteString(CurrentTeamID, "ParaDropAircraft", text);
+}
+
 void CNewTeamTypes::OnSelchangeTransportWaypoint(HWND& hWnd, bool edited)
 {
     if (SelectedTeamIndex < 0)
@@ -1176,6 +1269,14 @@ void CNewTeamTypes::OnSelchangeHouse(bool edited)
     map.WriteString(CurrentTeamID, "House", Translations::ParseHouseName(text, false));
 }
 
+void CNewTeamTypes::RebuildTaskforceList()
+{
+    if (!TaskforceListChanged) return;
+    int tmp = 0;
+    ExtraWindow::SortTeams(vcbTaskForce, "TaskForces", tmp);
+    TaskforceListChanged = false;
+}
+
 void CNewTeamTypes::OnDropdownTaskForce()
 {
     int curSel = SendMessage(hTaskforce, CB_GETCURSEL, NULL, NULL);
@@ -1185,12 +1286,7 @@ void CNewTeamTypes::OnDropdownTaskForce()
     FString::TrimIndex(text);
 	text += " ";
 
-    if (TaskforceListChanged)
-    {
-        int tmp = 0;
-        ExtraWindow::SortTeams(vcbTaskForce, "TaskForces", tmp);
-        TaskforceListChanged = false;
-    }
+    RebuildTaskforceList();
 
     int idx = vcbTaskForce.FindStringExactStart(text);
     if (idx != CB_ERR)
@@ -1204,6 +1300,14 @@ void CNewTeamTypes::OnDropdownTaskForce()
     }
 }
 
+void CNewTeamTypes::RebuildScriptList()
+{
+    if (!ScriptListChanged) return;
+    int tmp = 0;
+    ExtraWindow::SortTeams(vcbScript, "ScriptTypes", tmp);
+    ScriptListChanged = false;
+}
+
 void CNewTeamTypes::OnDropdownScript()
 {
     int curSel = SendMessage(hScript, CB_GETCURSEL, NULL, NULL);
@@ -1213,12 +1317,7 @@ void CNewTeamTypes::OnDropdownScript()
     FString::TrimIndex(text);
 	text += " ";
 
-    if (ScriptListChanged)
-    {
-        int tmp = 0;
-        ExtraWindow::SortTeams(vcbScript, "ScriptTypes", tmp);
-        ScriptListChanged = false;
-    }
+    RebuildScriptList();
 
     int idx = vcbScript.FindStringExactStart(text);
     if (idx != CB_ERR)
@@ -1232,6 +1331,28 @@ void CNewTeamTypes::OnDropdownScript()
     }
 }
 
+void CNewTeamTypes::RebuildTagList()
+{
+    if (!TagListChanged) return;
+    vcbTag.Clear();
+    std::vector<std::pair<FString, FString>> labels;
+    if (auto pSection = map.GetSection("Tags")) {
+        for (auto& pair : pSection->GetEntities()) {
+            labels.emplace_back(std::make_pair(pair.first, ExtraWindow::GetTagDisplayName(pair.first)));
+        }
+    }
+    bool tmp2 = ExtConfigs::SortByLabelName;
+    ExtConfigs::SortByLabelName = ExtConfigs::SortByLabelName_Tag;
+    ExtraWindow::SortLabels(labels, false);
+    ExtConfigs::SortByLabelName = tmp2;
+    vcbTag.AddString("None");
+    for (auto& [id, name] : labels)
+    {
+        vcbTag.AddString(name, ExtraWindow::GetTriggerColor(id));		
+    }
+    TagListChanged = false;
+}
+
 void CNewTeamTypes::OnDropdownTag()
 {
     int curSel = SendMessage(hTag, CB_GETCURSEL, NULL, NULL);
@@ -1241,25 +1362,7 @@ void CNewTeamTypes::OnDropdownTag()
 	FString::TrimIndex(text);
 	text += " ";
 
-	if (TagListChanged)
-    {
-        vcbTag.Clear();
-        std::vector<std::pair<FString, FString>> labels;
-        if (auto pSection = map.GetSection("Tags")) {
-            for (auto& pair : pSection->GetEntities()) {
-                labels.emplace_back(std::make_pair(pair.first, ExtraWindow::GetTagDisplayName(pair.first)));
-            }
-        }
-        bool tmp2 = ExtConfigs::SortByLabelName;
-        ExtConfigs::SortByLabelName = ExtConfigs::SortByLabelName_Tag;
-        ExtraWindow::SortLabels(labels, false);
-        ExtConfigs::SortByLabelName = tmp2;
-        vcbTag.AddString("None");
-        for (auto& [id, name] : labels)
-        {
-            vcbTag.AddString(name, ExtraWindow::GetTriggerColor(id));		
-        }
-    }
+    RebuildTagList();
 
     int idx = vcbTag.FindStringExactStart(text);
     if (idx != CB_ERR)
@@ -1408,6 +1511,43 @@ void CNewTeamTypes::OnSelchangeMindControlDecision(HWND& hWnd, bool edited)
     map.WriteString(CurrentTeamID, "MindControlDecision", text);
 }
 
+void CNewTeamTypes::OnSelchangeSetRecruitOnLiber(HWND& hWnd, bool edited)
+{
+    if (SelectedTeamIndex < 0)
+        return;
+    int curSel = SendMessage(hSetRecruitOnLiber, CB_GETCURSEL, NULL, NULL);
+    int count = SendMessage(hSetRecruitOnLiber, CB_GETCOUNT, NULL, NULL);
+    char buffer[512]{ 0 };
+    FString text;
+    if (curSel >= 0 && curSel < count)
+    {
+        SendMessage(hSetRecruitOnLiber, CB_GETLBTEXT, curSel, (LPARAM)buffer);
+        text = buffer;
+    }
+    if (edited)
+    {
+        GetWindowText(hSetRecruitOnLiber, buffer, 511);
+        text = buffer;
+        int idx = SendMessage(hSetRecruitOnLiber, CB_FINDSTRING, 0, (LPARAM)text);
+        if (idx != CB_ERR)
+        {
+            SendMessage(hSetRecruitOnLiber, CB_GETLBTEXT, idx, (LPARAM)buffer);
+            text = buffer;
+        }
+    }
+
+    FString::TrimIndex(text);
+
+    if (text.IsEmpty())
+    { 
+        map.DeleteKey(CurrentTeamID, "SetRecruitableOnLiberate");
+    } 
+    else
+    {
+        map.WriteString(CurrentTeamID, "SetRecruitableOnLiberate", text);
+    }
+}
+
 void CNewTeamTypes::OnSelchangeTeamtypes(bool edited)
 {
     SelectedTeamIndex = SendMessage(hSelectedTeam, CB_GETCURSEL, NULL, NULL);
@@ -1424,10 +1564,12 @@ void CNewTeamTypes::OnSelchangeTeamtypes(bool edited)
         SendMessage(hPriority, WM_SETTEXT, 0, (LPARAM)"");
         SendMessage(hMax, WM_SETTEXT, 0, (LPARAM)"");
         SendMessage(hTechlevel, WM_SETTEXT, 0, (LPARAM)"");
+        SendMessage(hParaDropPlane, WM_SETTEXT, 0, (LPARAM)"");
         SendMessage(hTransportWaypoint, WM_SETTEXT, 0, (LPARAM)"");
         SendMessage(hGroup, WM_SETTEXT, 0, (LPARAM)"");
         SendMessage(hWaypoint, WM_SETTEXT, 0, (LPARAM)"");
         SendMessage(hMindControlDecision, WM_SETTEXT, 0, (LPARAM)"");
+        SendMessage(hSetRecruitOnLiber, WM_SETTEXT, 0, (LPARAM)"");
         SendMessage(hCheckBoxLoadable, BM_SETCHECK, BST_UNCHECKED, 0);
         SendMessage(hCheckBoxFull, BM_SETCHECK, BST_UNCHECKED, 0);
         SendMessage(hCheckBoxAnnoyance, BM_SETCHECK, BST_UNCHECKED, 0);
@@ -1486,9 +1628,9 @@ void CNewTeamTypes::OnSelchangeTeamtypes(bool edited)
         auto taskforce = map.GetString(pID, "TaskForce");
         auto script = map.GetString(pID, "Script");
         auto tag = map.GetString(pID, "Tag");
+        auto tParaDropPlane = map.GetString(pID, "ParaDropAircraft", "None");
         auto tWaypoint = STDHelpers::StringToWaypointStr(map.GetString(pID, "TransportWaypoint"));
         auto waypoint = STDHelpers::StringToWaypointStr(map.GetString(pID, "Waypoint"));
-
 
         SendMessage(hName, WM_SETTEXT, 0, (LPARAM)name.GetString());
 
@@ -1571,7 +1713,19 @@ void CNewTeamTypes::OnSelchangeTeamtypes(bool edited)
         else
             SendMessage(hMindControlDecision, WM_SETTEXT, 0, (LPARAM)map.GetString(pID, "MindControlDecision").GetString());
 
-        SendMessage(hCheckBoxLoadable, BM_SETCHECK, map.GetBool(pID, "Loadable"), 0);
+        int idxSROL = SendMessage(hSetRecruitOnLiber, CB_FINDSTRING, 0, (LPARAM)map.GetString(pID, "SetRecruitableOnLiberate").GetString());
+        if (idxSROL != CB_ERR)
+            SendMessage(hSetRecruitOnLiber, CB_SETCURSEL, idxSROL, NULL);
+        else
+            SendMessage(hSetRecruitOnLiber, WM_SETTEXT, 0, (LPARAM)map.GetString(pID, "SetRecruitableOnLiberate").GetString());
+
+		int idxPDP = vcbParaDropPlane.FindStringExactStart(tParaDropPlane);
+		if (idxPDP != CB_ERR)
+            vcbParaDropPlane.SetCurSel(idxPDP);
+		else
+            vcbParaDropPlane.SetEditText(tParaDropPlane);
+
+		SendMessage(hCheckBoxLoadable, BM_SETCHECK, map.GetBool(pID, "Loadable"), 0);
         SendMessage(hCheckBoxFull, BM_SETCHECK, map.GetBool(pID, "Full"), 0);
         SendMessage(hCheckBoxAnnoyance, BM_SETCHECK, map.GetBool(pID, "Annoyance"), 0);
         SendMessage(hCheckBoxGuardSlower, BM_SETCHECK, map.GetBool(pID, "GuardSlower"), 0);
@@ -1754,8 +1908,11 @@ void CNewTeamTypes::OnClickNewTeam()
 
     OnSelchangeTeamtypes();
     CNewAITrigger::TeamListChanged = true;
-    CNewTrigger::Instance[0].TeamListChanged = true;
-    CNewTrigger::Instance[1].TeamListChanged = true;
+    for (int i = 0; i < TRIGGER_EDITOR_MAX_COUNT; ++i)
+    {
+        if (CNewTrigger::Instance[i].GetHandle())
+            CNewTrigger::Instance[i].TeamListChanged = true;
+    }
 
     TeamSort::Instance.AddTrigger(value);
 }
@@ -1766,7 +1923,7 @@ void CNewTeamTypes::OnClickDelTeam(HWND& hWnd)
         return;
     int result = MessageBox(hWnd,
         Translations::TranslateOrDefault("TeamTypesDelTeamWarn", "Are you sure that you want to delete the selected team-type? If you delete it, don't forget to delete any reference to the team-type."),
-        Translations::TranslateOrDefault("TeamTypesDelTeamTitle", "Delete team-type"), MB_YESNO);
+        Translations::TranslateOrDefault("TeamTypesDelTeamTitle", "Delete team-type"), MB_YESNO | MB_ICONQUESTION);
 
     if (result == IDNO)
         return;
@@ -1793,8 +1950,11 @@ void CNewTeamTypes::OnClickDelTeam(HWND& hWnd)
     SendMessage(hSelectedTeam, CB_SETCURSEL, idx, NULL);
     OnSelchangeTeamtypes();
     CNewAITrigger::TeamListChanged = true;
-    CNewTrigger::Instance[0].TeamListChanged = true;
-    CNewTrigger::Instance[1].TeamListChanged = true;
+    for (int i = 0; i < TRIGGER_EDITOR_MAX_COUNT; ++i)
+    {
+        if (CNewTrigger::Instance[i].GetHandle())
+            CNewTrigger::Instance[i].TeamListChanged = true;
+    }
 
     if (TeamSort::Instance.IsVisible())
         TeamSort::Instance.LoadAllTriggers();
@@ -1852,9 +2012,11 @@ void CNewTeamTypes::OnClickCloTeam(HWND& hWnd)
         copyitem("LooseRecruit");
         copyitem("VeteranLevel");
         copyitem("IsBaseDefense");
+        copyitem("ParaDropAircraft");
         copyitem("TransportWaypoint");
         copyitem("UseTransportOrigin");
         copyitem("MindControlDecision");
+        copyitem("SetRecruitableOnLiberate");
         copyitem("OnlyTargetHouseEnemy");
         copyitem("TransportsReturnOnUnload");
         copyitem("AreTeamMembersRecruitable");
@@ -1864,8 +2026,11 @@ void CNewTeamTypes::OnClickCloTeam(HWND& hWnd)
 
         OnSelchangeTeamtypes();
         CNewAITrigger::TeamListChanged = true;
-        CNewTrigger::Instance[0].TeamListChanged = true;
-        CNewTrigger::Instance[1].TeamListChanged = true;
+        for (int i = 0; i < TRIGGER_EDITOR_MAX_COUNT; ++i)
+        {
+            if (CNewTrigger::Instance[i].GetHandle())
+                CNewTrigger::Instance[i].TeamListChanged = true;
+        }
         TeamSort::Instance.AddTrigger(value);
     }
 }

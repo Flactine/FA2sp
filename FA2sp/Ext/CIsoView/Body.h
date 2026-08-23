@@ -32,6 +32,8 @@ namespace Renderer
     class ObjectType;
 }
 
+enum class PathfindingMoveType : int;
+
 struct EditedMarks
 {
     short X;
@@ -133,6 +135,7 @@ enum MeasurementTypes : int
     PlaceCircle_Annotation,
     LineSegment_Annotation,
     ArrowSegment_Annotation,
+    PathDistance,
 };
 
 struct TwoPointStruct
@@ -141,6 +144,15 @@ struct TwoPointStruct
     MapCoord Point2;
     bool drawText;
     bool hasArrow;
+};
+
+struct PathDistanceStruct
+{
+    MapCoord Point1{ 0, 0 };
+    MapCoord Point2{ 0, 0 };
+    std::vector<MapCoord> Path;
+    std::vector<unsigned char> Levels;
+    std::vector<unsigned char> Heights;
 };
 
 struct HighBridgeLineStruct
@@ -285,6 +297,13 @@ public:
     static void ReduceBrightness(IDirectDrawSurface7* pSurface, const RECT& rc);
     static int GetRandomTileIndex();
 
+    // Last known good window rect, used when the window is minimized: Windows
+    // reports a position around (-32000,-32000) for minimized windows, which
+    // breaks every map<->screen coordinate conversion. GetValidWindowRect
+    // substitutes the cached position while keeping the current size.
+    static RECT LastValidWindowRect;
+    static void GetValidWindowRect(HWND hwnd, RECT* rc);
+
     // flatMode 0 = auto, 1 = flat, 2 = height
     static void MapCoord2ScreenCoord(int& X, int& Y, int flatMode = 0);
     static bool ClipLineToRect(int& x1, int& y1, int& x2, int& y2, const RECT& rect);
@@ -341,7 +360,7 @@ public:
     inline MapCoord GetCurrentMapCoord(const CPoint& point)
     {
         RECT rect;
-        this->GetWindowRect(&rect);
+        GetValidWindowRect(this->GetSafeHwnd(), &rect);
         //AdaptRectForSecondScreen(&rect);
         int x = point.x + rect.left + this->ViewPosition.x;
         int y = point.y + rect.top + this->ViewPosition.y;
@@ -393,6 +412,9 @@ public:
     static bool DrawCellTagsFilter;
     static bool RenderingMap;
     static bool RenderFullMap;
+    static bool RenderingScreenshot;
+    static int RenderingScreenshotBaseX;
+    static int RenderingScreenshotBaseY;
     static bool RenderCurrentLayers;
     static bool RenderTileSuccess;
     static bool RenderInvisibleInGame;
@@ -439,6 +461,19 @@ public:
     static bool EnableOtherMeasurementTools;
     static std::vector<TwoPointStruct> TwoPointDistance;
     static std::vector<TwoPointStruct> TwoPointDistance_Annotation;
+    static std::vector<PathDistanceStruct> PathDistances;
+    static PathfindingMoveType SelectedPathfindingType;
+    static bool EnableDestroyOverlay;
+    static bool EnableIgnoreObjects;
+    static bool PathPreviewValid;
+    static MapCoord PathPreviewStart;
+    static MapCoord PathPreviewEnd;
+    static PathfindingMoveType PathPreviewType;
+    static bool PathPreviewDestroyOverlay;
+    static bool PathPreviewIgnoreObjects;
+    static std::vector<MapCoord> PathPreviewPath;
+    static std::vector<unsigned char> PathPreviewLevels;
+    static std::vector<unsigned char> PathPreviewHeights;
     static MapCoord AxialSymmetryLine[2];
     static MapCoord TempCircle[2];
     static MapCoord TempCircle_Annotation[2];

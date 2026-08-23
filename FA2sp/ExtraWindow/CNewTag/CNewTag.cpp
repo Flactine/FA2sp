@@ -129,6 +129,7 @@ void CNewTag::Initialize(HWND& hWnd)
     vcbRepeat.Attach(hRepeat);
     vcbRepeat.SetAutoSearchRestriction(&m_disableRepeatSearch);
     vcbTrigger.Attach(hTrigger, &ExtConfigs::SortByLabelName_Trigger);
+    vcbTrigger.SetPreFilterCallback([]() { if (TriggerListChanged) SortTriggers(); });
 
     Update(true);
 }
@@ -703,7 +704,7 @@ BOOL CALLBACK CNewTag::DlgProc(HWND hWnd, UINT Msg, WPARAM wParam, LPARAM lParam
                 OnSelchangeTrigger();
             else if (CODE == CBN_EDITCHANGE)
                 OnSelchangeTrigger(true);
-            else if (CODE == CBN_DROPDOWN && TriggerListChanged)
+            else if (CODE == CBN_DROPDOWN && TriggerListChanged && !vcbTrigger.IsProgrammaticDropdown())
                 OnDropdownTrigger();
             break;
         case Controls::Repeat:
@@ -994,7 +995,7 @@ void CNewTag::OnClickDelTag(HWND& hWnd)
         return;
     int result = MessageBox(hWnd,
         Translations::TranslateOrDefault("Tag.DelWarn", "Are you sure to delete the selected tag? This may cause the attached trigger to don't work anymore, if no other tag has the trigger attached."),
-        Translations::TranslateOrDefault("Tag.DelTitle", "Delete tag"), MB_YESNO);
+        Translations::TranslateOrDefault("Tag.DelTitle", "Delete tag"), MB_YESNO | MB_ICONQUESTION);
 
     if (result == IDNO)
         return;

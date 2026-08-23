@@ -65,6 +65,9 @@ bool CIsoViewExt::DrawBasenodesFilter = false;
 bool CIsoViewExt::DrawCellTagsFilter = false;
 bool CIsoViewExt::RenderingMap = false;
 bool CIsoViewExt::RenderFullMap = false;
+bool CIsoViewExt::RenderingScreenshot = false;
+int CIsoViewExt::RenderingScreenshotBaseX = 0;
+int CIsoViewExt::RenderingScreenshotBaseY = 0;
 bool CIsoViewExt::RenderCurrentLayers = false;
 bool CIsoViewExt::RenderTileSuccess = false;
 bool CIsoViewExt::RenderInvisibleInGame = false;
@@ -83,6 +86,19 @@ bool CIsoViewExt::EnableLiveDistanceRuler = false;
 bool CIsoViewExt::EnableOtherMeasurementTools = false;
 std::vector<TwoPointStruct> CIsoViewExt::TwoPointDistance{};
 std::vector<TwoPointStruct> CIsoViewExt::TwoPointDistance_Annotation{};
+std::vector<PathDistanceStruct> CIsoViewExt::PathDistances{};
+PathfindingMoveType CIsoViewExt::SelectedPathfindingType = PathfindingMoveType::NormalLand;
+bool CIsoViewExt::EnableDestroyOverlay = false;
+bool CIsoViewExt::EnableIgnoreObjects = false;
+bool CIsoViewExt::PathPreviewValid = false;
+MapCoord CIsoViewExt::PathPreviewStart{};
+MapCoord CIsoViewExt::PathPreviewEnd{};
+PathfindingMoveType CIsoViewExt::PathPreviewType = PathfindingMoveType::NormalLand;
+bool CIsoViewExt::PathPreviewDestroyOverlay = false;
+bool CIsoViewExt::PathPreviewIgnoreObjects = false;
+std::vector<MapCoord> CIsoViewExt::PathPreviewPath{};
+std::vector<unsigned char> CIsoViewExt::PathPreviewLevels{};
+std::vector<unsigned char> CIsoViewExt::PathPreviewHeights{};
 MapCoord CIsoViewExt::AxialSymmetryLine[2]{};
 MapCoord CIsoViewExt::TempCircle[2]{};
 MapCoord CIsoViewExt::TempCircle_Annotation[2]{};
@@ -1970,6 +1986,7 @@ void CIsoViewExt::DrawWaypointFlag(int X, int Y, LPDDSURFACEDESC2 lpDesc)
     auto image = CLoadingExt::GetSurfaceImageDataFromMap("FLAG");
     this->BlitTransparentDesc(image->lpSurface, GetBackBuffer(), lpDesc, X + 5 + 25 - image->FullWidth / 2, Y + 12 - image->FullHeight / 2, -1, -1);
 }
+
 void CIsoViewExt::GetSameConnectedCells(int X, int Y, int oriX, int oriY, std::set<MapCoord> *selectedCoords)
 {
     if (!selectedCoords)
@@ -2062,6 +2079,14 @@ void CIsoViewExt::GetSameConnectedCells(int X, int Y, int oriX, int oriY, std::s
             {
                 if (CMapDataExt::TileData[tileIndex_cell2].TileSet == CMapDataExt::WaterSet &&
                     CMapDataExt::TileData[tileIndex_cell].TileSet == CMapDataExt::WaterSet)
+                {
+                    match = true;
+                }
+            }
+
+            if (ExtConfigs::FillArea_ConsiderWholeTile && !match)
+            {
+                if (tileIndex_cell2 == tileIndex_cell)
                 {
                     match = true;
                 }
@@ -2993,15 +3018,44 @@ std::vector<MapCoord> CIsoViewExt::GetPathFromDirections(int x0, int y0, const s
     return path;
 }
 
+RECT CIsoViewExt::LastValidWindowRect = {0, 0, 0, 0};
+
 RECT CIsoViewExt::GetScaledWindowRect()
 {
     CRect rect;
     auto pThis = CIsoView::GetInstance();
-    pThis->GetWindowRect(&rect);
+    GetValidWindowRect(pThis->GetSafeHwnd(), &rect);
     AdaptRectForSecondScreen(&rect);
     rect.right += rect.Width() * (CIsoViewExt::ScaledFactor - 1.0);
     rect.bottom += rect.Height() * (CIsoViewExt::ScaledFactor - 1.0);
     return rect;
+}
+
+void CIsoViewExt::GetValidWindowRect(HWND hwnd, RECT* rc)
+{
+    ::GetWindowRect(hwnd, rc);
+
+    // Minimized windows are placed around (-32000,-32000) by Windows; using
+    // that position corrupts every map<->screen coordinate conversion (black
+    // screenshots, wrong view bounds). Fall back to the last known good
+    // position while keeping the current size.
+    if (rc->left < -10000 || rc->right < -10000 || rc->top < -10000 || rc->bottom < -10000)
+    {
+        if (LastValidWindowRect.right > LastValidWindowRect.left &&
+            LastValidWindowRect.bottom > LastValidWindowRect.top)
+        {
+            LONG w = rc->right - rc->left;
+            LONG h = rc->bottom - rc->top;
+            rc->left = LastValidWindowRect.left;
+            rc->top = LastValidWindowRect.top;
+            rc->right = rc->left + w;
+            rc->bottom = rc->top + h;
+        }
+    }
+    else
+    {
+        LastValidWindowRect = *rc;
+    }
 }
 
 void CIsoViewExt::ReduceBrightness(IDirectDrawSurface7 *pSurface, const RECT &rc)
@@ -3579,7 +3633,7 @@ void CIsoViewExt::DrawDistanceRuler(HDC hDC, const RECT &rect, bool bScreenSpace
                 {
                     TextOutClipped(hDC, drawX, drawY + lineHeight * j++, buffer, buffer.GetLength(), rect);
                 }
-                buffer.Format(Translations::TranslateOrDefault("DistanceRuler.Coordinate", "XY: %d, %d, ¦¤XY: %d, %d"),
+                buffer.Format(Translations::TranslateOrDefault("DistanceRuler.Coordinate", "XY: %d, %d, ??XY: %d, %d"),
                               coord2.Y, coord2.X, coord2.Y - coord1.Y, coord2.X - coord1.X);
                 if (ExtConfigs::DirectXRendering)
                 {
@@ -3729,12 +3783,20 @@ void CIsoViewExt::DrawHighBridgeLines(HDC hDC, const RECT &rect, bool bScreenSpa
 
         int x1 = coord1.X;
         int y1 = coord1.Y;
-        CIsoViewExt::MapCoord2ScreenCoord(x1, y1);
-        int height = CMapData::Instance->GetCellAt(coord1.X, coord1.Y)->Height;
+        CIsoViewExt::MapCoord2ScreenCoord(x1, y1, 1);
+		int height = cell->Height;
+        auto& tileBlock = CMapDataExt::TileData[CMapDataExt::GetSafeTileIndex(cell->TileIndex)]
+        .TileBlockDatas[CMapDataExt::GetSafeSubTileIndex(cell->TileIndex, cell->TileSubIndex)];
+        height = std::min(14, height - tileBlock.Height + 4);
+
         int x2 = coord2.X;
         int y2 = coord2.Y;
         CIsoViewExt::MapCoord2ScreenCoord(x2, y2, 1);
-        y2 -= height * 15 / CIsoViewExt::ScaledFactor;
+        if (!CFinalSunApp::Instance->FlatToGround)
+        {
+            y2 -= height * 15 / CIsoViewExt::ScaledFactor;
+            y1 -= height * 15 / CIsoViewExt::ScaledFactor;
+        }
         if (ExtConfigs::DirectXRendering)
         {
             CIsoViewExt::DrawLineDirectX(x1, y1, x2, y2, success ? RGB(0, 255, 0) : RGB(255, 0, 0), 4);
@@ -3829,7 +3891,7 @@ void CIsoViewExt::DrawOtherMeasurementTools(HDC hDC, const RECT &rect, bool bScr
                 {
                     TextOutClipped(hDC, drawX, drawY + lineHeight * j++, buffer, buffer.GetLength(), rect);
                 }
-                buffer.Format(Translations::TranslateOrDefault("DistanceRuler.Coordinate", "XY: %d, %d, ¦¤XY: %d, %d"),
+                buffer.Format(Translations::TranslateOrDefault("DistanceRuler.Coordinate", "XY: %d, %d, ??XY: %d, %d"),
                               coord2.Y, coord2.X,
                               coord2.Y - twoPoints.Point1.Y, coord2.X - twoPoints.Point1.X);
                 if (ExtConfigs::DirectXRendering)
@@ -3841,6 +3903,95 @@ void CIsoViewExt::DrawOtherMeasurementTools(HDC hDC, const RECT &rect, bool bScr
                     TextOutClipped(hDC, drawX, drawY + lineHeight * j++, buffer, buffer.GetLength(), rect);
                 }
             }
+        }
+    }
+    for (auto& pathDist : PathDistances)
+    {
+        if (pathDist.Point1 == MapCoord{0, 0})
+            continue;
+        MapCoord endCoord = pathDist.Point2;
+        const std::vector<MapCoord>* pPath = &pathDist.Path;
+        const std::vector<unsigned char>* pHeights = &pathDist.Heights;
+        if (endCoord == MapCoord{0, 0})
+        {
+            auto point = pIsoView->GetCurrentMapCoord(pIsoView->MouseCurrentPosition);
+            endCoord = point;
+            if (!CMapData::Instance->IsCoordInMap(endCoord.X, endCoord.Y))
+                continue;
+            if (!PathPreviewValid || PathPreviewStart != pathDist.Point1
+                || PathPreviewEnd != endCoord || PathPreviewType != SelectedPathfindingType
+                || PathPreviewDestroyOverlay != EnableDestroyOverlay
+                || PathPreviewIgnoreObjects != EnableIgnoreObjects)
+            {
+                PathPreviewStart = pathDist.Point1;
+                PathPreviewEnd = endCoord;
+                PathPreviewType = SelectedPathfindingType;
+                PathPreviewDestroyOverlay = EnableDestroyOverlay;
+                PathPreviewIgnoreObjects = EnableIgnoreObjects;
+                PathPreviewPath = CMapDataExt::FindPath(PathPreviewStart, PathPreviewEnd, PathPreviewType,
+                    PathPreviewDestroyOverlay, PathPreviewIgnoreObjects, &PathPreviewLevels, true, &PathPreviewHeights);
+                PathPreviewValid = true;
+            }
+            pPath = &PathPreviewPath;
+            pHeights = &PathPreviewHeights;
+        }
+
+        const bool bFlat = CFinalSunApp::Instance->FlatToGround;
+        for (size_t i = 1; i < pPath->size(); ++i)
+        {
+            int px1 = (*pPath)[i - 1].X;
+            int py1 = (*pPath)[i - 1].Y;
+            CIsoViewExt::MapCoord2ScreenCoord(px1, py1, 1);
+            if (!bFlat && i - 1 < pHeights->size())
+                py1 -= (int)((*pHeights)[i - 1] * 15 / CIsoViewExt::ScaledFactor);
+            int px2 = (*pPath)[i].X;
+            int py2 = (*pPath)[i].Y;
+            CIsoViewExt::MapCoord2ScreenCoord(px2, py2, 1);
+            if (!bFlat && i < pHeights->size())
+                py2 -= (int)((*pHeights)[i] * 15 / CIsoViewExt::ScaledFactor);
+            if (ExtConfigs::DirectXRendering)
+            {
+                CIsoViewExt::DrawLineDirectX(px1, py1, px2, py2, ExtConfigs::DistanceRuler_Color, 2);
+            }
+            else
+            {
+                CIsoViewExt::DrawLineHDC(hDC, px1, py1, px2, py2, ExtConfigs::DistanceRuler_Color, rect, 2);
+            }
+        }
+
+        int ex = endCoord.X;
+        int ey = endCoord.Y;
+        CIsoViewExt::MapCoord2ScreenCoord(ex, ey, 1);
+        if (!bFlat && !pHeights->empty())
+            ey -= (int)(pHeights->back() * 15 / CIsoViewExt::ScaledFactor);
+        int pathDrawX = ex - CIsoViewExt::drawOffsetX + 30;
+        int pathDrawY = ey - CIsoViewExt::drawOffsetY - 15;
+        FString buffer;
+        if (pPath->empty() && pathDist.Point1 != endCoord)
+        {
+            buffer.Format(Translations::TranslateOrDefault("DistanceRuler.PathUnreachable", "Path Distance: Unreachable"));
+        }
+        else
+        {
+            double distance = 0.0;
+            for (size_t i = 1; i < pPath->size(); ++i)
+            {
+                double dx = (*pPath)[i].X - (*pPath)[i - 1].X;
+                double dy = (*pPath)[i].Y - (*pPath)[i - 1].Y;
+                distance += sqrt(dx * dx + dy * dy);
+            }
+            std::ostringstream oss;
+            oss.precision(2);
+            oss << std::fixed << distance;
+            buffer.Format(Translations::TranslateOrDefault("DistanceRuler.PathDistance", "Path Distance: %s"), oss.str().c_str());
+        }
+        if (ExtConfigs::DirectXRendering)
+        {
+            TextOutDirectX(pathDrawX, pathDrawY, buffer, fontSize);
+        }
+        else
+        {
+            TextOutClipped(hDC, pathDrawX, pathDrawY, buffer, buffer.GetLength(), rect);
         }
     }
     for (auto &[mc, radius] : CIsoViewExt::Circles)
@@ -4688,7 +4839,7 @@ void CIsoViewExt::DirectXMouseNewRaiseGroundCursor(int X, int Y, int height, boo
         Y += 1;
     }
 
-    // Reduced to 1/3 of original diamond size (30/SF ¡ú 10/SF, 15/SF ¡ú 5/SF)
+    // Reduced to 1/3 of original diamond size (30/SF ?? 10/SF, 15/SF ?? 5/SF)
     double rx = 10 / CIsoViewExt::ScaledFactor;
     double ry = 5 / CIsoViewExt::ScaledFactor;
     // Center stays at original diamond center
@@ -4763,8 +4914,8 @@ void CIsoViewExt::MoveToMapCoord(int X, int Y)
 
     auto pThis = CIsoView::GetInstance();
     RECT rect = GetScaledWindowRect();
-    int x = 30 * (CMapData::Instance->MapWidthPlusHeight + Y - X) - (rect.right - rect.left) / 2 - rect.left;
-    int y = 15 * (Y + X) - CMapData::Instance->TryGetCellAt(X, Y)->Height - (rect.bottom - rect.top) / 2 - rect.top;
+    int x = 30 * (CMapData::Instance->MapWidthPlusHeight + Y - X) - (rect.right - rect.left) / 2 - rect.left + 30;
+    int y = 15 * (Y + X) - CMapData::Instance->TryGetCellAt(X, Y)->Height - (rect.bottom - rect.top) / 2 - rect.top - 45;
     pThis->MoveTo(x, y);
     pThis->RedrawWindow(nullptr, nullptr, RDW_INVALIDATE | RDW_UPDATENOW);
     CFinalSunDlg::Instance->MyViewFrame.Minimap.RedrawWindow(nullptr, nullptr, RDW_INVALIDATE | RDW_UPDATENOW);
@@ -5811,6 +5962,20 @@ void CIsoViewExt::PlaceTileOnMouse(int x, int y, int nFlags, bool recordHistory)
                                     )
                                     {                                      
                                         HighBridgeLines.push_back({{my_x, my_y}, 0});
+                                    }
+                                    else if ((releativeTileIndex >= 6 && releativeTileIndex <= 10)
+                                        && p == 4
+                                    )
+                                    {                                      
+                                        HighBridgeLines.push_back({{my_x, my_y}, 1});
+                                        HighBridgeLines.push_back({{my_x, my_y}, 3});
+                                    }
+                                    else if ((releativeTileIndex >= 11 && releativeTileIndex <= 15)
+                                        && p == 2
+                                    )
+                                    {                                      
+                                        HighBridgeLines.push_back({{my_x, my_y}, 0});
+                                        HighBridgeLines.push_back({{my_x, my_y}, 2});
                                     }
                                 }
                                

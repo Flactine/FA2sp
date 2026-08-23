@@ -26,9 +26,11 @@
 #include "../../ExtraWindow/CTerrainGenerator/CTerrainGenerator.h"
 #include "../../Miscs/DialogStyle.h"
 #include "TabPages/GridObjectViewer.h"
+#include "TabPages/MapObjectList.h"
 
 HWND CTileSetBrowserFrameExt::hTabCtrl = NULL;
 bool CTileSetBrowserFrameExt::TerrainDlgLoaded = true;
+bool CTileSetBrowserFrameExt::RefreshPending = false;
 CTileSetBrowserView* CTileSetBrowserFrameExt::TileSetBrowserView_Instance = nullptr;
 float CTileSetBrowserFrameExt::TileSetBrowserViewScaledFactor = 1.0f;
 float CTileSetBrowserFrameExt::OverlayBrowserViewScaledFactor = 1.0f;
@@ -60,8 +62,6 @@ void CTileSetBrowserFrameExt::OnBNSearchClicked()
 		::ShowWindow(CObjectSearch::GetHandle(), SW_SHOW);
 		::SendMessage(CObjectSearch::GetHandle(), 114514, 0, 0);
 	}
-
-
 }
 void CTileSetBrowserFrameExt::OnBNTerrainGeneratorClicked()
 {
@@ -78,6 +78,24 @@ void CTileSetBrowserFrameExt::OnBNTerrainGeneratorClicked()
 void CTileSetBrowserFrameExt::RefreshWindows()
 {
 	PostMessage(CFinalSunDlg::Instance->MyViewFrame.pTileSetBrowserFrame->GetSafeHwnd(), 114514, 0, 0);
+}
+
+void CTileSetBrowserFrameExt::RefreshAllTabs()
+{
+	if (TriggerSort::Instance.IsVisible())
+		TriggerSort::Instance.LoadAllTriggers();
+	if (TagSort::Instance.IsVisible())
+		TagSort::Instance.LoadAllTriggers();
+	if (TeamSort::Instance.IsVisible())
+		TeamSort::Instance.LoadAllTriggers();
+	if (TaskforceSort::Instance.IsVisible())
+		TaskforceSort::Instance.LoadAllTriggers();
+	if (ScriptSort::Instance.IsVisible())
+		ScriptSort::Instance.LoadAllTriggers();
+	if (WaypointSort::Instance.IsVisible())
+		WaypointSort::Instance.LoadAllTriggers();
+	if (MapObjectList::Instance.IsVisible())
+		MapObjectList::Instance.Refresh();
 }
 
 BOOL CTileSetBrowserFrameExt::PreTranslateMessageExt(MSG* pMsg)
@@ -268,6 +286,17 @@ BOOL CTileSetBrowserFrameExt::PreTranslateMessageExt(MSG* pMsg)
 	}
 	else if (pMsg->message == 114514)
 	{
+		if (RefreshPending && ::IsWindowVisible(this->GetSafeHwnd()))
+		{
+			RefreshPending = false;
+			RefreshAllTabs();
+		}
+		// Keep the object list dirty even while its tab is hidden.
+		// The list refreshes immediately only when visible, or once when shown.
+		if (MapObjectList::Instance.IsValid())
+		{
+			InvalidateRect(MapObjectList::Instance.GetHwnd(), NULL, TRUE);
+		}
 		if (GridObjectViewer::Instance.IsVisible())
 		{	
 			InvalidateRect(GridObjectViewer::Instance.GetControl(), NULL, TRUE);
@@ -340,6 +369,7 @@ BOOL CTileSetBrowserFrameExt::OnNotifyExt(WPARAM wParam, LPARAM lParam, LRESULT*
 				WaypointSort::Instance.HideWindow();
 				TagSort::Instance.HideWindow();
 				GridObjectViewer::Instance.HideWindow();
+				MapObjectList::Instance.HideWindow();
 				break;
 			case TabPage::TriggerSort:
 				this->DialogBar.ShowWindow(SW_HIDE);
@@ -353,6 +383,7 @@ BOOL CTileSetBrowserFrameExt::OnNotifyExt(WPARAM wParam, LPARAM lParam, LRESULT*
 				WaypointSort::Instance.HideWindow();
 				TagSort::Instance.HideWindow();
 				GridObjectViewer::Instance.HideWindow();
+				MapObjectList::Instance.HideWindow();
 				break;
 			case TabPage::TeamSort:
 				this->DialogBar.ShowWindow(SW_HIDE);
@@ -366,6 +397,7 @@ BOOL CTileSetBrowserFrameExt::OnNotifyExt(WPARAM wParam, LPARAM lParam, LRESULT*
 				WaypointSort::Instance.HideWindow();
 				TagSort::Instance.HideWindow();
 				GridObjectViewer::Instance.HideWindow();
+				MapObjectList::Instance.HideWindow();
 				break;
 			case TabPage::TaskforceSort:
 				this->DialogBar.ShowWindow(SW_HIDE);
@@ -379,6 +411,7 @@ BOOL CTileSetBrowserFrameExt::OnNotifyExt(WPARAM wParam, LPARAM lParam, LRESULT*
 				WaypointSort::Instance.HideWindow();
 				TagSort::Instance.HideWindow();
 				GridObjectViewer::Instance.HideWindow();
+				MapObjectList::Instance.HideWindow();
 				break;
 			case TabPage::ScriptSort:
 				this->DialogBar.ShowWindow(SW_HIDE);
@@ -392,6 +425,7 @@ BOOL CTileSetBrowserFrameExt::OnNotifyExt(WPARAM wParam, LPARAM lParam, LRESULT*
 				WaypointSort::Instance.HideWindow();
 				TagSort::Instance.HideWindow();
 				GridObjectViewer::Instance.HideWindow();
+				MapObjectList::Instance.HideWindow();
 				break;
 			case TabPage::WaypointSort:
 				this->DialogBar.ShowWindow(SW_HIDE);
@@ -405,6 +439,7 @@ BOOL CTileSetBrowserFrameExt::OnNotifyExt(WPARAM wParam, LPARAM lParam, LRESULT*
 				WaypointSort::Instance.ShowWindow();
 				WaypointSort::Instance.LoadAllTriggers();
 				GridObjectViewer::Instance.HideWindow();
+				MapObjectList::Instance.HideWindow();
 				break;
 			case TabPage::TagSort:
 				this->DialogBar.ShowWindow(SW_HIDE);
@@ -418,6 +453,7 @@ BOOL CTileSetBrowserFrameExt::OnNotifyExt(WPARAM wParam, LPARAM lParam, LRESULT*
 				TagSort::Instance.ShowWindow();
 				TagSort::Instance.LoadAllTriggers();
 				GridObjectViewer::Instance.HideWindow();
+				MapObjectList::Instance.HideWindow();
 				break;
 			case TabPage::GridObjectViewer:
 				this->DialogBar.ShowWindow(SW_HIDE);
@@ -430,6 +466,19 @@ BOOL CTileSetBrowserFrameExt::OnNotifyExt(WPARAM wParam, LPARAM lParam, LRESULT*
 				WaypointSort::Instance.HideWindow();
 				TagSort::Instance.HideWindow();
 				GridObjectViewer::Instance.ShowWindow();
+				MapObjectList::Instance.HideWindow();
+				break;
+			case TabPage::MapObjectList:
+				this->DialogBar.ShowWindow(SW_HIDE);
+				this->View.ShowWindow(SW_HIDE);
+				TriggerSort::Instance.HideWindow();
+				TeamSort::Instance.HideWindow();
+				TaskforceSort::Instance.HideWindow();
+				ScriptSort::Instance.HideWindow();
+				WaypointSort::Instance.HideWindow();
+				TagSort::Instance.HideWindow();
+				GridObjectViewer::Instance.HideWindow();
+				MapObjectList::Instance.ShowWindow();
 				break;
 			}
 
@@ -510,6 +559,7 @@ void CTileSetBrowserFrameExt::InitTabControl()
 
 	insertItem("Tiles && Overlays", "TabPages.TilePlacement");
 	insertItem("Object Viewer", "TabPages.GridObjectViewer");
+	insertItem("Map Objects", "TabPages.MapObjectList");
 	insertItem("Trigger Sort", "TabPages.TriggerSort");
 	insertItem("Tag Sort", "TabPages.TagSort");
 	insertItem("Team Sort", "TabPages.TeamSort");
@@ -538,4 +588,7 @@ void CTileSetBrowserFrameExt::InitTabControl()
 	
 	GridObjectViewer::Instance.Create(hTabCtrl);
 	GridObjectViewer::Instance.HideWindow();
+
+	MapObjectList::Instance.Create(hTabCtrl);
+	MapObjectList::Instance.HideWindow();
 }

@@ -112,27 +112,30 @@ void CNewTrigger::Create(CFinalSunDlg* pWnd)
 
     if (m_hwnd)
     {
-        RECT rc;
-        GetWindowRect(m_hwnd, &rc);
+        if (!HeadlessMode)
+        {
+            RECT rc;
+            GetWindowRect(m_hwnd, &rc);
 
-        const int offset = 20;
+            const int offset = 20;
 
-        int index = GetCurrentInstanceIndex();
-        int dx = index * offset;
-        int dy = index * offset;
+            int index = GetCurrentInstanceIndex();
+            int dx = index * offset;
+            int dy = index * offset;
 
-        SetWindowPos(
-            m_hwnd,
-            nullptr,
-            windowPos.x == 0 ? (rc.left + dx) : windowPos.x,
-            windowPos.y == 0 ? (rc.top + dy) : windowPos.y,
-            0, 0,
-            SWP_NOSIZE | SWP_NOZORDER | SWP_NOACTIVATE
-        );
-        PostMessage(m_hwnd, WM_USER + 100, 0, 0);
-        ShowWindow(m_hwnd, SW_SHOW);
+            SetWindowPos(
+                m_hwnd,
+                nullptr,
+                windowPos.x == 0 ? (rc.left + dx) : windowPos.x,
+                windowPos.y == 0 ? (rc.top + dy) : windowPos.y,
+                0, 0,
+                SWP_NOSIZE | SWP_NOZORDER | SWP_NOACTIVATE
+            );
+            PostMessage(m_hwnd, WM_USER + 100, 0, 0);
+            ShowWindow(m_hwnd, SW_SHOW);
+            WindowShown = true;
+        }
         CNewTrigger::Initialize(m_hwnd);
-        WindowShown = true;
     }
     else
     {
@@ -266,8 +269,8 @@ void CNewTrigger::Initialize(HWND& hWnd)
     hActionMoveUp = GetDlgItem(hWnd, Controls::ActionMoveUp);
     hActionMoveDown = GetDlgItem(hWnd, Controls::ActionMoveDown);
     hActionSplit = GetDlgItem(hWnd, Controls::ActionSplit);
-    SetWindowTextW(hActionMoveUp, L"\u25b2"); //¡ø
-    SetWindowTextW(hActionMoveDown, L"\u25bc"); //¨‹
+    SetWindowTextW(hActionMoveUp, L"\u25b2"); 
+    SetWindowTextW(hActionMoveDown, L"\u25bc"); 
     Translate(2005, "TriggerActionSplit");
      
     vcbSelectedTrigger.Attach(hSelectedTrigger, &ExtConfigs::SortByLabelName_Trigger, false);
@@ -283,11 +286,27 @@ void CNewTrigger::Initialize(HWND& hWnd)
     {
         vcbEventParameter[i].Attach(hEventParameter[i]);
         vcbEventParameter[i].SetAutoSearchRestriction(&CNewTrigger::EventParameterAutoDrop[i]);
+        vcbEventParameter[i].SetPreFilterCallback([this]() {
+            if (TeamListChanged) {
+                m_suppressEditChange = true;
+                UpdateEventAndParam();
+                TeamListChanged = false;
+                m_suppressEditChange = false;
+            }
+        });
     }
     for (int i = 0; i < ACTION_PARAM_COUNT; ++i)
     {
         vcbActionParameter[i].Attach(hActionParameter[i]);
         vcbActionParameter[i].SetAutoSearchRestriction(&CNewTrigger::ActionParameterAutoDrop[i]);
+        vcbActionParameter[i].SetPreFilterCallback([this]() {
+            if (TeamListChanged) {
+                m_suppressEditChange = true;
+                UpdateActionAndParam();
+                TeamListChanged = false;
+                m_suppressEditChange = false;
+            }
+        });
     }
 
     if (!IsMainInstance())
@@ -348,7 +367,7 @@ void CNewTrigger::Initialize(HWND& hWnd)
 
 void CNewTrigger::Update(HWND& hWnd, bool UpdateTrigger)
 {
-    if (m_hwnd)
+    if (m_hwnd && !HeadlessMode)
     {
         ShowWindow(m_hwnd, SW_SHOW);
         SetWindowPos(m_hwnd, HWND_TOP, 0, 0, 0, 0, SWP_NOMOVE | SWP_NOSIZE | SWP_SHOWWINDOW);
@@ -2022,14 +2041,18 @@ BOOL CALLBACK CNewTrigger::HandleMsg(HWND hWnd, UINT Msg, WPARAM wParam, LPARAM 
         case Controls::EventParameter1:
             if (CODE == CBN_SELCHANGE)
                 OnSelchangeEventParam(0);
-            else if (CODE == CBN_EDITCHANGE)
+            else if (CODE == CBN_EDITCHANGE && !m_suppressEditChange)
                 OnSelchangeEventParam(0, true);
+            else if (CODE == CBN_DROPDOWN && !vcbEventParameter[0].IsProgrammaticDropdown())
+                OnDropdownCComboBox(0, true);
             break;
         case Controls::EventParameter2:
             if (CODE == CBN_SELCHANGE)
                 OnSelchangeEventParam(1);
-            else if (CODE == CBN_EDITCHANGE)
+            else if (CODE == CBN_EDITCHANGE && !m_suppressEditChange)
                 OnSelchangeEventParam(1, true);
+            else if (CODE == CBN_DROPDOWN && !vcbEventParameter[1].IsProgrammaticDropdown())
+                OnDropdownCComboBox(1, true);
             break;
         case Controls::Actiontype:
             if (CODE == CBN_SELCHANGE)
@@ -2040,50 +2063,50 @@ BOOL CALLBACK CNewTrigger::HandleMsg(HWND hWnd, UINT Msg, WPARAM wParam, LPARAM 
         case Controls::ActionParameter1:
             if (CODE == CBN_SELCHANGE)
                 OnSelchangeActionParam(0);
-            else if (CODE == CBN_EDITCHANGE)
+            else if (CODE == CBN_EDITCHANGE && !m_suppressEditChange)
                 OnSelchangeActionParam(0, true);
-            else if (CODE == CBN_DROPDOWN)
-                OnDropdownCComboBox(0);
+            else if (CODE == CBN_DROPDOWN && !vcbActionParameter[0].IsProgrammaticDropdown())
+                OnDropdownCComboBox(0, false);
             break;
         case Controls::ActionParameter2:
             if (CODE == CBN_SELCHANGE)
                 OnSelchangeActionParam(1);
-            else if (CODE == CBN_EDITCHANGE)
+            else if (CODE == CBN_EDITCHANGE && !m_suppressEditChange)
                 OnSelchangeActionParam(1, true);
-            else if (CODE == CBN_DROPDOWN)
-                OnDropdownCComboBox(1);
+            else if (CODE == CBN_DROPDOWN && !vcbActionParameter[1].IsProgrammaticDropdown())
+                OnDropdownCComboBox(1, false);
             break;
         case Controls::ActionParameter3:
             if (CODE == CBN_SELCHANGE)
                 OnSelchangeActionParam(2);
-            else if (CODE == CBN_EDITCHANGE)
+            else if (CODE == CBN_EDITCHANGE && !m_suppressEditChange)
                 OnSelchangeActionParam(2, true);
-            else if (CODE == CBN_DROPDOWN)
-                OnDropdownCComboBox(2);
+            else if (CODE == CBN_DROPDOWN && !vcbActionParameter[2].IsProgrammaticDropdown())
+                OnDropdownCComboBox(2, false);
             break;
         case Controls::ActionParameter4:
             if (CODE == CBN_SELCHANGE)
                 OnSelchangeActionParam(3);
-            else if (CODE == CBN_EDITCHANGE)
+            else if (CODE == CBN_EDITCHANGE && !m_suppressEditChange)
                 OnSelchangeActionParam(3, true);
-            else if (CODE == CBN_DROPDOWN)
-                OnDropdownCComboBox(3);
+            else if (CODE == CBN_DROPDOWN && !vcbActionParameter[3].IsProgrammaticDropdown())
+                OnDropdownCComboBox(3, false);
             break;
         case Controls::ActionParameter5:
             if (CODE == CBN_SELCHANGE)
                 OnSelchangeActionParam(4);
-            else if (CODE == CBN_EDITCHANGE)
+            else if (CODE == CBN_EDITCHANGE && !m_suppressEditChange)
                 OnSelchangeActionParam(4, true);
-            else if (CODE == CBN_DROPDOWN)
-                OnDropdownCComboBox(4);
+            else if (CODE == CBN_DROPDOWN && !vcbActionParameter[4].IsProgrammaticDropdown())
+                OnDropdownCComboBox(4, false);
             break;
         case Controls::ActionParameter6:
             if (CODE == CBN_SELCHANGE)
                 OnSelchangeActionParam(5);
-            else if (CODE == CBN_EDITCHANGE)
+            else if (CODE == CBN_EDITCHANGE && !m_suppressEditChange)
                 OnSelchangeActionParam(5, true);
-            else if (CODE == CBN_DROPDOWN)
-                OnDropdownCComboBox(5);
+            else if (CODE == CBN_DROPDOWN && !vcbActionParameter[5].IsProgrammaticDropdown())
+                OnDropdownCComboBox(5, false);
             break;
         case Controls::ActionJump1:
             if (CODE == BN_CLICKED)
@@ -2820,8 +2843,11 @@ void CNewTrigger::OnClickNewTrigger()
     value.Format("%s,<none>,%s,0,1,1,1,0", house, newName);
 
     map.WriteString("Triggers", id, value);
-    map.WriteString("Events", id, "1,0,0,0");
-    map.WriteString("Actions", id, "1,0,0,0,0,0,0,0,A");
+    if (!HeadlessMode)
+    {
+        map.WriteString("Events", id, "1,0,0,0");
+        map.WriteString("Actions", id, "1,0,0,0,0,0,0,0,A");
+    }
     auto tagId = CMapDataExt::GetAvailableIndex(EIndexType::Tag);
     value.Format("0,%s 1,%s", newName, id);
     map.WriteString("Tags", tagId, value);
@@ -2902,7 +2928,12 @@ void CNewTrigger::OnClickDelTrigger(HWND& hWnd)
         "If you want to cancel to deletion of the trigger, press Cancel.\n"
         "Note: CellTags will be deleted too using this function if you press Yes.");
 
-    int nResult = ::MessageBox(hWnd, pMessage, Translations::TranslateOrDefault("TriggerDeleteTitle", "Delete Trigger"), MB_YESNOCANCEL);
+    int nResult;
+    if (HeadlessMode)
+        nResult = HeadlessDeleteTags ? IDYES : IDNO;
+    else
+        nResult = ::MessageBox(hWnd, pMessage, Translations::TranslateOrDefault("TriggerDeleteTitle", "Delete Trigger"),
+                        MB_YESNOCANCEL | MB_ICONQUESTION);
     if (nResult == IDYES || nResult == IDNO)
     {
         if (nResult == IDYES)
@@ -3048,7 +3079,7 @@ void CNewTrigger::OnClickNewEvent(HWND& hWnd)
         "After creating the new event, the length of the event INI will exceed 511, and the excess will not work properly. \nDo you want to continue?");
 
     int nResult = IDYES;
-    if (value.GetLength() >= 512)
+    if (value.GetLength() >= 512 && !HeadlessMode)
         nResult = ::MessageBox(hWnd, pMessage, Translations::TranslateOrDefault("TriggerLengthExceededTitle", "Length Exceeded"), MB_YESNO | MB_ICONWARNING);
 
     if (nResult == IDYES)
@@ -3097,7 +3128,7 @@ void CNewTrigger::OnClickCloEvent(HWND& hWnd)
     }
 
     int nResult = IDYES;
-    if (length.GetLength() >= 512)
+    if (length.GetLength() >= 512 && !HeadlessMode)
         nResult = ::MessageBox(hWnd, pMessage, Translations::TranslateOrDefault("TriggerLengthExceededTitle", "Length Exceeded"), MB_YESNO | MB_ICONWARNING);
 
     if (nResult == IDYES)
@@ -3128,6 +3159,11 @@ void CNewTrigger::OnClickCloEvent(HWND& hWnd)
 void CNewTrigger::OnClickDelEvent(HWND& hWnd)
 {
     if (!CurrentTrigger) return;
+    if (!HeadlessMode && ExtConfigs::ConfirmDeleteSubEntries && MessageBox(hWnd,
+        Translations::TranslateOrDefault("TriggerDelEventWarn", "Are you sure to delete the selected event(s) from this trigger?"),
+        Translations::TranslateOrDefault("TriggerDelEventTitle", "Delete Trigger Event"),
+        MB_YESNO | MB_ICONQUESTION) == IDNO)
+        return;
     std::vector<int> selected;
     GetEventListBoxSels(selected);
 
@@ -3181,7 +3217,7 @@ void CNewTrigger::OnClickNewAction(HWND& hWnd)
         "After creating the new action, the length of the action INI will exceed 511, and the excess will not work properly. \nDo you want to continue?");
 
     int nResult = IDYES;
-    if (value.GetLength() >= 512)
+    if (value.GetLength() >= 512 && !HeadlessMode)
         nResult = ::MessageBox(hWnd, pMessage, Translations::TranslateOrDefault("TriggerLengthExceededTitle", "Length Exceeded"), MB_YESNO | MB_ICONWARNING);
 
     if (nResult == IDYES)
@@ -3229,7 +3265,7 @@ void CNewTrigger::OnClickCloAction(HWND& hWnd)
     }
 
     int nResult = IDYES;
-    if (length.GetLength() >= 512)
+    if (length.GetLength() >= 512 && !HeadlessMode)
         nResult = ::MessageBox(hWnd, pMessage, Translations::TranslateOrDefault("TriggerLengthExceededTitle", "Length Exceeded"), MB_YESNO | MB_ICONWARNING);
 
     if (nResult == IDYES)
@@ -3261,6 +3297,11 @@ void CNewTrigger::OnClickCloAction(HWND& hWnd)
 void CNewTrigger::OnClickDelAction(HWND& hWnd)
 {
     if (!CurrentTrigger) return;
+    if (!HeadlessMode && ExtConfigs::ConfirmDeleteSubEntries && MessageBox(hWnd,
+        Translations::TranslateOrDefault("TriggerDelActionWarn", "Are you sure to delete the selected action(s) from this trigger?"),
+        Translations::TranslateOrDefault("TriggerDelActionTitle", "Delete Trigger Action"),
+        MB_YESNO | MB_ICONQUESTION) == IDNO)
+        return;
     std::vector<int> selected;
     GetActionListBoxSels(selected);
 
@@ -3755,11 +3796,15 @@ void CNewTrigger::AdjustActionHeight()
     MoveWindow(m_hwnd, rect.left, rect.top, rect.right - rect.left, rect.bottom - rect.top + (ActionParamsCount - LastActionParamsCount) * heightDistance, TRUE);
 }
 
-void CNewTrigger::OnDropdownCComboBox(int index)
+void CNewTrigger::OnDropdownCComboBox(int index, bool isEvent)
 {
-    if (ActionParamType[index] == ParamType::CSF && ExtConfigs::TutorialTexts_Viewer)
+    auto& paramType = isEvent ? EventParamType[index] : ActionParamType[index];
+    auto& vcb = isEvent ? vcbEventParameter[index] : vcbActionParameter[index];
+
+    if (paramType == ParamType::CSF && ExtConfigs::TutorialTexts_Viewer)
     {
-        PostMessage(hActionParameter[index], CB_SHOWDROPDOWN, FALSE, 0);
+        HWND hParam = isEvent ? hEventParameter[index] : hActionParameter[index];
+        PostMessage(hParam, CB_SHOWDROPDOWN, FALSE, 0);
         CCsfEditor::TriggerCaller = GetCurrentInstanceIndex();
         CCsfEditor::TriggerParamIndex = index;
         if (CCsfEditor::GetHandle() == NULL)
@@ -3769,7 +3814,7 @@ void CNewTrigger::OnDropdownCComboBox(int index)
             ::SendMessage(CCsfEditor::GetHandle(), 114514, 0, 0);
         }
         char buffer[512]{ 0 };
-        GetWindowText(hActionParameter[index], buffer, 511);
+        GetWindowText(hParam, buffer, 511);
 
         FString text(buffer);
         text.Replace(",", "");
@@ -3779,24 +3824,29 @@ void CNewTrigger::OnDropdownCComboBox(int index)
 
         ::SendMessage(CCsfEditor::GetHandle(), 114515, 0, 0);
     }
-    else if (ActionParamType[index] == ParamType::Team && TeamListChanged)
+    else if (paramType == ParamType::Team && TeamListChanged)
     {
-		FString text = vcbActionParameter[index].GetEditText();
-		FString::TrimIndex(text);
-		text += " ";
+        FString text = vcb.GetEditText();
+        FString::TrimIndex(text);
+        text += " ";
 
-		UpdateActionAndParam();
+        m_suppressEditChange = true;
+        if (isEvent)
+            UpdateEventAndParam();
+        else
+            UpdateActionAndParam();
         TeamListChanged = false;
+        m_suppressEditChange = false;
 
-        int idx = vcbActionParameter[index].FindStringExactStart(text);
+        int idx = vcb.FindStringExactStart(text);
         if (idx != CB_ERR)
         {
-			vcbActionParameter[index].SetCurSel(idx);
-		}
+            vcb.SetCurSel(idx);
+        }
         else
         {
             FString::TrimIndex(text);
-            vcbActionParameter[index].SetEditText(text);
+            vcb.SetEditText(text);
         }
     }
 }

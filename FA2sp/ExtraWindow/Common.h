@@ -136,6 +136,7 @@ public:
     static void LoadParam_Units(VirtualComboBoxEx& vcb);
     static void LoadParam_Aircrafts(VirtualComboBoxEx& vcb);
     static void LoadParam_Structures(VirtualComboBoxEx& vcb);
+    static void LoadParam_Scenarios(VirtualComboBoxEx& vcb);
     static void LoadParam_Stringtables(VirtualComboBoxEx& vcb);
 
     // House and Tag loading for property dialogs (to be implemented by user)
@@ -440,6 +441,10 @@ public:
     static void SetWindowHeight(HWND hwnd, LPARAM lParam);
     void SetDropWidthMode(DropWidthMode mode);
 
+    bool IsProgrammaticDropdown() const { return m_programmaticDropdown; }
+
+    void SetPreFilterCallback(std::function<void()> cb) { m_preFilterCallback = std::move(cb); }
+
     void SortItems(int* pSelIndex = nullptr);
 
     static int m_itemHeight;
@@ -478,6 +483,8 @@ private:
     bool m_EnterKeyPressed = false;
     bool m_SpecialKeysFirst = false;
 
+    std::function<void()> m_preFilterCallback;
+
     DropWidthMode m_dropWidthMode = DropWidth_AutoMax;
     int m_cachedMaxWidth = 0;
     HBRUSH m_hCurBrush = nullptr;
@@ -495,6 +502,30 @@ private:
     static LRESULT CALLBACK EditProc(HWND, UINT, WPARAM, LPARAM);
     static LRESULT CALLBACK ListProc(HWND, UINT, WPARAM, LPARAM);
     LRESULT OnComboMessage(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam);
+};
+
+class TooltipHelper
+{
+public:
+    TooltipHelper() = default;
+    ~TooltipHelper() { Detach(); }
+
+    void Attach(HWND hStatic, const char* text);
+    void SetText(const char* text);
+    void Detach();
+
+private:
+    HWND hStatic = nullptr;
+    HWND hTooltip = nullptr;
+    std::string m_text;
+    WNDPROC oldStaticProc = nullptr;
+    bool m_hovered = false;
+
+    static std::map<HWND, TooltipHelper*> TooltipHelperMap;
+
+    static LRESULT CALLBACK StaticProc(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam);
+    LRESULT OnStaticMessage(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam);
+    void DrawCircle(HWND hWnd, HDC hdc);
 };
 
 class CINIDialog : public ppmfc::CDialog

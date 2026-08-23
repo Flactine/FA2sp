@@ -218,7 +218,6 @@
     <ClCompile Include="FA2sp\ExtraWindow\CListUInputDlg\CListUInputDlg.cpp" />
     <ClCompile Include="FA2sp\ExtraWindow\CLuaConsole\CLuaConsole.cpp" />
     <ClCompile Include="FA2sp\ExtraWindow\CLuaConsole\CMcpServer.cpp" />
-    <ClCompile Include="FA2sp\ExtraWindow\CLuaConsole\LuaFunctions.cpp" />
     <ClCompile Include="FA2sp\ExtraWindow\CLuaDialog\CLuaDialog.cpp" />
     <ClCompile Include="FA2sp\ExtraWindow\CMapRendererDlg\CMapRendererDlg.cpp" />
     <ClCompile Include="FA2sp\ExtraWindow\CMeasurementToolbox\CMeasurementToolbox.cpp" />
@@ -237,6 +236,7 @@
     <ClCompile Include="FA2sp\ExtraWindow\CNewTeamTypes\CNewTeamTypes.cpp" />
     <ClCompile Include="FA2sp\ExtraWindow\CNewTipsOfTheDay\CNewTipsOfTheDay.cpp" />
     <ClCompile Include="FA2sp\ExtraWindow\CNewTrigger\CNewTrigger.cpp" />
+    <ClCompile Include="FA2sp\ExtraWindow\CNewTrigger\HeadlessTrigger.cpp" />
     <ClCompile Include="FA2sp\ExtraWindow\CObjectSearch\CObjectSearch.cpp" />
     <ClCompile Include="FA2sp\ExtraWindow\Common.cpp" />
     <ClCompile Include="FA2sp\ExtraWindow\CFA2spOptions\CFA2spOptions.cpp" />
@@ -273,6 +273,7 @@
     <ClCompile Include="FA2sp\Ext\CIsoView\DirectXCore.cpp" />
     <ClCompile Include="FA2sp\Ext\CMapData\HeightGenerator.cpp" />
     <ClCompile Include="FA2sp\Ext\CMapD\Body.cpp" />
+    <ClCompile Include="FA2sp\Ext\CTileSetBrowserView\Body.cpp" />
     <ClCompile Include="glad\src\glad.c" />
     <ClCompile Include="FA2sp\Ext\CIsoView\Hooks.cpp" />
     <ClCompile Include="FA2sp\Ext\CIsoView\Body.DrawObjects.cpp" />
@@ -293,6 +294,7 @@
     <ClCompile Include="FA2sp\Ext\CLoading\Hooks.LoadObjects.cpp" />
     <ClCompile Include="FA2sp\Ext\CMapData\Body.cpp" />
     <ClCompile Include="FA2sp\Ext\CMapData\Body.RandomGround.cpp" />
+    <ClCompile Include="FA2sp\Ext\CMapData\Body.Pathfinding.cpp" />
     <ClCompile Include="FA2sp\Ext\CMapData\Body.ResizeMap.cpp" />
     <ClCompile Include="FA2sp\Ext\CMapData\Hooks.UndoRedo.cpp" />
     <ClCompile Include="FA2sp\Ext\CMapData\Hooks.AutoPropertyBrush.cpp" />
@@ -321,6 +323,7 @@
     <ClCompile Include="FA2sp\Ext\CTags\Body.cpp" />
     <ClCompile Include="FA2sp\Ext\CTileSetBrowserFrame\Hooks.cpp" />
     <ClCompile Include="FA2sp\Ext\CTileSetBrowserFrame\TabPages\GridObjectViewer.cpp" />
+    <ClCompile Include="FA2sp\Ext\CTileSetBrowserFrame\TabPages\MapObjectList.cpp" />
     <ClCompile Include="FA2sp\Ext\CTileSetBrowserFrame\TabPages\ScriptSort.cpp" />
     <ClCompile Include="FA2sp\Ext\CTileSetBrowserFrame\TabPages\TagSort.cpp" />
     <ClCompile Include="FA2sp\Ext\CTileSetBrowserFrame\TabPages\TaskForceSort.cpp" />
@@ -426,6 +429,7 @@
     <ClInclude Include="FA2sp\Ext\CIsoView\DirectXCore.h" />
     <ClInclude Include="FA2sp\Ext\CMapData\HeightGenerator.h" />
     <ClInclude Include="FA2sp\Ext\CMapD\Body.h" />
+    <ClInclude Include="FA2sp\Ext\CTileSetBrowserView\Body.h" />
     <ClInclude Include="glad\include\glad\glad.h" />
     <ClInclude Include="FA2sp\Ext\CIsoView\RendererTypes.h" />
     <ClInclude Include="FA2sp\Ext\CLighting\Body.h" />
@@ -442,6 +446,7 @@
     <ClInclude Include="FA2sp\Ext\CSingleplayerSettings\Body.h" />
     <ClInclude Include="FA2sp\Ext\CTags\Body.h" />
     <ClInclude Include="FA2sp\Ext\CTileSetBrowserFrame\TabPages\GridObjectViewer.h" />
+    <ClInclude Include="FA2sp\Ext\CTileSetBrowserFrame\TabPages\MapObjectList.h" />
     <ClInclude Include="FA2sp\Ext\CTileSetBrowserFrame\TabPages\ScriptSort.h" />
     <ClInclude Include="FA2sp\Ext\CTileSetBrowserFrame\TabPages\TagSort.h" />
     <ClInclude Include="FA2sp\Ext\CTileSetBrowserFrame\TabPages\TaskForceSort.h" />
