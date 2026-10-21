@@ -9,11 +9,15 @@
 #include <regex>
 #include <string>
 #include <vector>
+#include <cstring>
 #include <algorithm>
 #include <CFinalSunApp.h>
 #include <CLoading.h>
 #include "../Miscs/StringtableLoader.h"
 #include "../Miscs/DialogStyle.h"
+#include "../Miscs/AudioBagSound.h"
+#include "../Ext/CLoading/Body.h"
+#include "../../FA2pp/FAMemory.h"
 #include "../Ext/CMapData/Body.h"
 #include "../Ext/CFinalSunApp/Body.h"
 #include "ILexer.h"
@@ -21,8 +25,10 @@
 #include "SciLexer.h"
 #include "Lexilla.h"
 #include <mbstring.h>
+#include <mmsystem.h>
+#pragma comment(lib, "winmm.lib")
 
-CINI& ExtraWindow::map = CINI::CurrentDocument;
+CINIExt& ExtraWindow::map = CINIExt::CurrentDocument;
 CINI& ExtraWindow::fadata = CINI::FAData;
 MultimapHelper& ExtraWindow::rules = Variables::RulesMap;
 std::vector<DropTarget> ExtraWindow::g_DropTargets;
@@ -319,14 +325,15 @@ void ExtraWindow::LoadParams(VirtualComboBoxEx& vcb, FString idx, CNewTrigger* i
         LoadParam_Triggers(vcb, instance);
         break;
     case 10:
-        if (!ExtConfigs::TutorialTexts_Viewer)
+        if (!ExtConfigs::TutorialTexts_Viewer || (instance && instance->HeadlessMode))
             LoadParam_Stringtables(vcb);
         break;
     case 11:
         LoadParam_Tags(vcb);
         break;
     case 12: // float
-        instance->ActionParamUsesFloat = true;
+        if (instance)
+            instance->ActionParamUsesFloat = true;
         break;
     case 13:
         LoadParam_CountryList(vcb);
@@ -408,7 +415,7 @@ void ExtraWindow::LoadParams(VirtualComboBoxEx& vcb, FString idx, CNewTrigger* i
                     {
                         for (auto pINI : mmh.GetINIData())
                         {
-                            if (pINI == &CINI::CurrentDocument)
+                            if (pINI == &CINIExt::CurrentDocument)
                             {
                                 // refresh indicies
                                 CMapDataExt::UpdateMapSectionIndicies(sectionName);
@@ -519,7 +526,7 @@ void ExtraWindow::LoadParam_CountryList(VirtualComboBoxEx& vcb)
 {
     MultimapHelper mmh;
     mmh.AddINI(&CINI::Rules);
-    mmh.AddINI(&CINI::CurrentDocument);
+    mmh.AddINI(&CINIExt::CurrentDocument);
 
     int rIdx = 0;
     const auto& indicies = Variables::RulesMap.ParseIndicies("Countries", true);
@@ -652,7 +659,14 @@ void ExtraWindow::LoadParam_Tags(VirtualComboBoxEx& vcb)
     if (auto pSection = map.GetSection("Tags")) {
         for (auto& pair : pSection->GetEntities()) {
             auto tagAtoms = FString::SplitString(pair.second);
-            text.Format("%s - %s", pair.first, tagAtoms[1]);
+            if (tagAtoms.size() < 2)
+            {
+                text = pair.first;
+            }
+            else
+            {
+                text.Format("%s - %s", pair.first, tagAtoms[1]);
+            }
             labels.push_back(std::make_pair(pair.first, text));
         }
     }
@@ -810,7 +824,7 @@ void ExtraWindow::LoadParams_Houses(VirtualComboBoxEx& vcb, bool multiOnly, bool
         players = false;
 
     auto pCountry = CINI::Rules->GetSection("Countries");
-    auto pHouse = CINI::CurrentDocument->GetSection("Houses");
+    auto pHouse = CINIExt::CurrentDocument->GetSection("Houses");
     INISection* pSection = nullptr;
 
     if (CMapDataExt::IsInitingPropertyDialog)
@@ -1391,7 +1405,7 @@ void ExtraWindow::LoadFrom(MultimapHelper& mmh, FString loadfrom)
         mmh = Variables::RulesMap;
     }
     else if (loadfrom == "3" || loadfrom == "map")
-        mmh.AddINI(&CINI::CurrentDocument);
+        mmh.AddINI(&CINIExt::CurrentDocument);
     else if (loadfrom == "4" || loadfrom == "art")
         mmh.AddINI(&CINI::Art);
     else if (loadfrom == "5" || loadfrom == "sound")
@@ -1401,7 +1415,7 @@ void ExtraWindow::LoadFrom(MultimapHelper& mmh, FString loadfrom)
     else if (loadfrom == "7" || loadfrom == "ai+map")
     {
         mmh.AddINI(&CINI::Ai);
-        mmh.AddINI(&CINI::CurrentDocument);
+        mmh.AddINI(&CINIExt::CurrentDocument);
     }
     else if (loadfrom == "8" || loadfrom == "eva")
         mmh.AddINI(&CINI::Eva);
@@ -1646,6 +1660,92 @@ void ExtraWindow::SetTriggerColor(const FString& trigger, COLORREF color)
     ppmfc::CString value;
     value.Format("%d,%d,%d", GetRValue(color), GetGValue(color), GetBValue(color));
     map.WriteString("FA2spColors", trigger, value);
+}
+
+ParamType ExtraWindow::GetParamType(const FString& paramIdx)
+{
+	auto intParamIdx = atoi(paramIdx);
+	if (intParamIdx < 500)
+    {
+        if (paramIdx == "10")
+        {
+            return ParamType::CSF;
+        }
+        else if (paramIdx == "1")
+        {
+            return ParamType::Waypoint;
+        }
+        else if (paramIdx == "9")
+        {
+            return ParamType::Trigger;
+        }
+        else if (paramIdx == "15")
+        {
+            return ParamType::Team;
+        }
+        else if (paramIdx == "11")
+        {
+            return ParamType::Tag;
+        }
+    }
+    else
+    {
+        auto atoms = FString::SplitString(fadata.GetString("NewParamTypes", paramIdx), 4);
+        auto sectionName = atoms[0];
+        auto& loadFrom = atoms[1]; 
+        bool loadFromMapOrAi = (loadFrom == "3" || loadFrom == "map" || loadFrom == "7" || loadFrom == "ai+map" || loadFrom == "10" || loadFrom == "ai");
+        bool loadFromMap = (loadFrom == "3" || loadFrom == "map");
+        if (sectionName == "TeamTypes" && loadFromMapOrAi)
+        {
+            return ParamType::Team;
+        }
+        else if (sectionName == "TaskForces" && loadFromMapOrAi)
+        {
+            return ParamType::Taskforce;
+        }
+        else if (sectionName == "ScriptTypes" && loadFromMapOrAi)
+        {
+            return ParamType::Script;
+        }
+        else if (sectionName == "AITriggerTypes" && loadFromMapOrAi)
+        {
+            return ParamType::AITrigger;
+        }
+        else if ((sectionName == "Triggers" 
+            || sectionName == "Actions" 
+            || sectionName == "Events")
+            && loadFromMap
+        )
+        {
+            return ParamType::Trigger;
+        }
+        else if (sectionName == "Tags" && loadFromMap)
+        {
+            return ParamType::Tag;
+        }
+        else if (sectionName == "VariableNames" && loadFromMap)
+        {
+            return ParamType::LocalVariable;
+        }
+        else if (sectionName == "Themes" && (loadFrom == "6" || loadFrom == "theme"))
+        {
+            return ParamType::Theme;
+        }
+        else if (sectionName == "SoundList" && (loadFrom == "5" || loadFrom == "sound"))
+        {
+            return ParamType::Sound;
+        }
+        else if (sectionName == "DialogList" && (loadFrom == "8" || loadFrom == "eva"))
+        {
+            return ParamType::Eva;
+        }
+        else if (sectionName == "Animations" && (loadFromMap || loadFrom == "1" || loadFrom == "rules"))
+        {
+            return ParamType::Animation;
+        }
+    }
+
+	return ParamType::None;
 }
 
 void HelpDlg::CreateHelpDlg(HWND& hParent, const FString& Title, const FString& Text)
@@ -4150,11 +4250,11 @@ BOOL CINIDialog::OnInitDialog()
     {
         if (info.Type == ControlType::CheckBox)
         {
-            CheckDlgButton(GetSafeHwnd(), id, CINI::CurrentDocument->GetBool(info.IniSection, info.IniKey) ? BST_CHECKED : BST_UNCHECKED); 
+            CheckDlgButton(GetSafeHwnd(), id, CINIExt::CurrentDocument->GetBool(info.IniSection, info.IniKey) ? BST_CHECKED : BST_UNCHECKED); 
         }
         else if (info.Type == ControlType::Edit)
         {
-            GetDlgItem(id)->SetWindowText(CINI::CurrentDocument->GetString(info.IniSection, info.IniKey));
+            GetDlgItem(id)->SetWindowText(CINIExt::CurrentDocument->GetString(info.IniSection, info.IniKey));
         }
         else if (info.Type == ControlType::Combobox)
         {
@@ -4164,7 +4264,7 @@ BOOL CINIDialog::OnInitDialog()
 				box->AddString(label);
 			}
             ExtraWindow::AdjustDropdownWidth(box->GetSafeHwnd());
-			auto text = CINI::CurrentDocument->GetString(info.IniSection, info.IniKey);
+			auto text = CINIExt::CurrentDocument->GetString(info.IniSection, info.IniKey);
 			int idx = box->FindStringExact(0, text);
             if (idx != CB_ERR)
             {
@@ -4195,6 +4295,9 @@ BOOL CINIDialog::OnCommand(WPARAM wParam, LPARAM lParam)
     WORD nID = LOWORD(wParam);
     WORD nNotify = HIWORD(wParam);
 
+    CINIDialog* const self = this;
+    (void)&self;
+
     if (!m_transparencyKey.IsEmpty()) {
         int alpha = -1;
         if (nID == TransparencyHelper::IDM_OPAQUE)           alpha = 255;
@@ -4216,7 +4319,7 @@ BOOL CINIDialog::OnCommand(WPARAM wParam, LPARAM lParam)
 		if (info.Type == ControlType::CheckBox && nNotify == BN_CLICKED)
         {
             bool checked = (IsDlgButtonChecked(GetSafeHwnd(), nID) == BST_CHECKED);
-            CINI::CurrentDocument->WriteString(info.IniSection, info.IniKey, checked ? "yes" : "no");
+            CINIExt::CurrentDocument->WriteString(info.IniSection, info.IniKey, checked ? "yes" : "no");
 			info.CallBack();
 		}
 		else if (info.Type == ControlType::Edit && nNotify == EN_CHANGE)
@@ -4225,9 +4328,9 @@ BOOL CINIDialog::OnCommand(WPARAM wParam, LPARAM lParam)
 			GetDlgItem(nID)->GetWindowText(buffer);
             buffer.Trim();
             if (!buffer.IsEmpty())
-                CINI::CurrentDocument->WriteString(info.IniSection, info.IniKey, buffer);
+                CINIExt::CurrentDocument->WriteString(info.IniSection, info.IniKey, buffer);
             else
-                CINI::CurrentDocument->DeleteKey(info.IniSection, info.IniKey);
+                CINIExt::CurrentDocument->DeleteKey(info.IniSection, info.IniKey);
 			info.CallBack();
         }
 		else if (info.Type == ControlType::Combobox && nNotify == CBN_SELCHANGE)
@@ -4241,9 +4344,9 @@ BOOL CINIDialog::OnCommand(WPARAM wParam, LPARAM lParam)
                 box->GetWindowText(buffer);
             buffer.Trim();
             if (!buffer.IsEmpty())
-                CINI::CurrentDocument->WriteString(info.IniSection, info.IniKey, buffer);
+                CINIExt::CurrentDocument->WriteString(info.IniSection, info.IniKey, buffer);
             else
-                CINI::CurrentDocument->DeleteKey(info.IniSection, info.IniKey);
+                CINIExt::CurrentDocument->DeleteKey(info.IniSection, info.IniKey);
 			info.CallBack();
         }
 		else if (info.Type == ControlType::Combobox && nNotify == CBN_EDITCHANGE)
@@ -4252,9 +4355,9 @@ BOOL CINIDialog::OnCommand(WPARAM wParam, LPARAM lParam)
 			GetDlgItem(nID)->GetWindowText(buffer);
             buffer.Trim();
             if (!buffer.IsEmpty())
-                CINI::CurrentDocument->WriteString(info.IniSection, info.IniKey, buffer);
+                CINIExt::CurrentDocument->WriteString(info.IniSection, info.IniKey, buffer);
             else
-                CINI::CurrentDocument->DeleteKey(info.IniSection, info.IniKey);
+                CINIExt::CurrentDocument->DeleteKey(info.IniSection, info.IniKey);
 			info.CallBack();
         }
 		else if (info.Type == ControlType::Button && nNotify == BN_CLICKED)
@@ -4263,7 +4366,7 @@ BOOL CINIDialog::OnCommand(WPARAM wParam, LPARAM lParam)
         }
 	}
 
-    return CDialog::OnCommand(wParam, lParam);
+    return self->CDialog::OnCommand(wParam, lParam);
 }
 
 void CINIDialog::DoDataExchange(ppmfc::CDataExchange* pDX)
@@ -4288,6 +4391,11 @@ void CINIDialog::OnCancel()
 
 BOOL CINIDialog::PreTranslateMessage(MSG* pMsg)
 {
+    if (pMsg->message == WM_LAUNCH_RANDOM_TREE)
+    {
+        LaunchRandomTreeDeferred();
+        return TRUE;
+    }
     if (!m_transparencyKey.IsEmpty() && m_transparency.HandleMessage(GetSafeHwnd(), pMsg->message, pMsg->wParam, pMsg->lParam, m_transparencyKey))
         return TRUE;
     return CDialog::PreTranslateMessage(pMsg);
@@ -4320,6 +4428,116 @@ void ExtraWindow::RestoreDisabledWindows()
             EnableWindow(h, TRUE);
     }
     s_disabledWindows.clear();
+}
+
+namespace
+{
+    std::vector<byte> g_SoundWavData;
+    bool g_ThemeSoundPlaying = false;
+    DWORD g_ThemeSoundStartTick = 0;
+    DWORD g_ThemeSoundDurationMs = 0;
+    bool g_BagSoundPlaying = false;
+    DWORD g_BagSoundStartTick = 0;
+    DWORD g_BagSoundDurationMs = 0;
+    int g_JumpLastSource = -1;
+    int g_JumpLastIndex = -1;
+    FString g_JumpLastName;
+
+    DWORD GetSoundWavDurationMs(const byte* pData, DWORD dwSize)
+    {
+        if (dwSize < 44 || memcmp(pData, "RIFF", 4) != 0 || memcmp(pData + 8, "WAVE", 4) != 0)
+            return 0;
+        DWORD byteRate = 0, dataSize = 0, pos = 12;
+        while (pos + 8 <= dwSize)
+        {
+            const byte* p = pData + pos;
+            DWORD chunkSize = p[4] | (p[5] << 8) | (p[6] << 16) | ((DWORD)p[7] << 24);
+            if (!byteRate && memcmp(p, "fmt ", 4) == 0 && pos + 24 <= dwSize)
+                byteRate = p[16] | (p[17] << 8) | (p[18] << 16) | ((DWORD)p[19] << 24);
+            else if (!dataSize && memcmp(p, "data", 4) == 0)
+                dataSize = chunkSize < dwSize - pos - 8 ? chunkSize : dwSize - pos - 8;
+            if (byteRate && dataSize)
+                break;
+            pos += 8 + chunkSize + (chunkSize & 1);
+        }
+        if (!byteRate || !dataSize)
+            return 0;
+        return (DWORD)((unsigned long long)dataSize * 1000 / byteRate);
+    }
+
+    bool IsSoundPlayingNow()
+    {
+        DWORD nowTick = GetTickCount();
+        if (g_ThemeSoundPlaying && g_ThemeSoundDurationMs
+            && nowTick - g_ThemeSoundStartTick >= g_ThemeSoundDurationMs)
+            g_ThemeSoundPlaying = false;
+        if (g_BagSoundPlaying && g_BagSoundDurationMs
+            && nowTick - g_BagSoundStartTick >= g_BagSoundDurationMs)
+            g_BagSoundPlaying = false;
+        return g_ThemeSoundPlaying || g_BagSoundPlaying;
+    }
+}
+
+void SoundPlayer::Stop()
+{
+    if (IsSoundPlayingNow())
+        PlaySound(NULL, NULL, 0);
+    g_ThemeSoundPlaying = false;
+    g_BagSoundPlaying = false;
+}
+
+bool SoundPlayer::IsPlaying()
+{
+    return IsSoundPlayingNow();
+}
+
+void SoundPlayer::PlayThemeSoundFile(const char* pFileName)
+{
+    if (!pFileName || !*pFileName)
+        return;
+    DWORD dwSize = 0;
+    if (auto pBuffer = static_cast<byte*>(CLoadingExt::GetExtension()->ReadWholeFile(pFileName, &dwSize)))
+    {
+        Stop();
+        g_SoundWavData.assign(pBuffer, pBuffer + dwSize);
+        GameDeleteArray(pBuffer, dwSize);
+        if (dwSize > 0 && PlaySound(reinterpret_cast<LPCSTR>(g_SoundWavData.data()), NULL, SND_MEMORY | SND_ASYNC))
+        {
+            g_ThemeSoundPlaying = true;
+            g_ThemeSoundStartTick = GetTickCount();
+            g_ThemeSoundDurationMs = GetSoundWavDurationMs(g_SoundWavData.data(), dwSize);
+        }
+    }
+}
+
+void SoundPlayer::PlayBagSound(const char* pSoundName, int volume)
+{
+    if (!pSoundName || !*pSoundName)
+        return;
+    std::vector<byte> wavData;
+    if ((!AudioBagSound::TryBuildWavFromFile(pSoundName, wavData, volume) || wavData.empty())
+        && (!AudioBagSound::TryBuildWav(pSoundName, wavData, volume) || wavData.empty()))
+        return;
+    Stop();
+    g_SoundWavData.assign(wavData.begin(), wavData.end());
+    if (PlaySound(reinterpret_cast<LPCSTR>(g_SoundWavData.data()), NULL, SND_MEMORY | SND_ASYNC))
+    {
+        g_BagSoundPlaying = true;
+        g_BagSoundStartTick = GetTickCount();
+        g_BagSoundDurationMs = GetSoundWavDurationMs(g_SoundWavData.data(), (DWORD)g_SoundWavData.size());
+    }
+}
+
+bool SoundPlayer::IsSameJumpTarget(int source, int index, const FString& soundName)
+{
+    return g_JumpLastSource == source && g_JumpLastIndex == index && g_JumpLastName == soundName;
+}
+
+void SoundPlayer::SetJumpTarget(int source, int index, const FString& soundName)
+{
+    g_JumpLastSource = source;
+    g_JumpLastIndex = index;
+    g_JumpLastName = soundName;
 }
 
 // ============================================================
@@ -4605,7 +4823,9 @@ void TooltipHelper::Attach(HWND hTarget, const char* text)
 		return;
 
 	TOOLINFO ti = { sizeof(ti) };
-	ti.uFlags = TTF_IDISHWND | TTF_SUBCLASS;
+	// Tracking tooltip: visibility is controlled by this class instead of the
+	// system's hover timing, which is unreliable for these small icons.
+	ti.uFlags = TTF_IDISHWND | TTF_TRACK | TTF_ABSOLUTE | TTF_TRANSPARENT;
 	ti.hwnd = hTarget;
 	ti.uId = (UINT_PTR)hTarget;
 	ti.lpszText = const_cast<char*>(m_text.c_str());
@@ -4642,22 +4862,102 @@ void TooltipHelper::SetText(const char* text)
 
 void TooltipHelper::Detach()
 {
-	if (hTooltip)
+	if (hStatic)
+	{
+		KillTimer(hStatic, HoverTimerId);
+		KillTimer(hStatic, CheckTimerId);
+	}
+
+	if (IsWindow(hTooltip))
 	{
 		DestroyWindow(hTooltip);
-		hTooltip = nullptr;
 	}
+	hTooltip = nullptr;
 
-	if (hStatic && oldStaticProc)
+	if (hStatic && IsWindow(hStatic))
 	{
-		SetWindowLongPtr(hStatic, GWLP_WNDPROC, (LONG_PTR)oldStaticProc);
+		if (oldStaticProc)
+		{
+			SetWindowLongPtr(hStatic, GWLP_WNDPROC, (LONG_PTR)oldStaticProc);
+		}
 		SetWindowLongPtr(hStatic, GWLP_USERDATA, 0);
-		oldStaticProc = nullptr;
+		TooltipHelperMap.erase(hStatic);
 	}
 
-	TooltipHelperMap.erase(hStatic);
+	oldStaticProc = nullptr;
 	hStatic = nullptr;
 	m_text.clear();
+	m_shown = false;
+	m_hovered = false;
+}
+
+bool TooltipHelper::IsCursorInside() const
+{
+	if (!hStatic || !IsWindow(hStatic))
+		return false;
+
+	RECT rc = {};
+	if (!GetWindowRect(hStatic, &rc))
+		return false;
+
+	POINT pt = {};
+	GetCursorPos(&pt);
+
+	return PtInRect(&rc, pt) != FALSE;
+}
+
+void TooltipHelper::ShowTip()
+{
+	if (!hTooltip || !hStatic || m_text.empty())
+		return;
+
+	// Only one tip is visible at a time.
+	for (auto& pair : TooltipHelperMap)
+	{
+		if (pair.second != this)
+			pair.second->HideTip();
+	}
+
+	RECT rc = {};
+	if (!GetWindowRect(hStatic, &rc))
+		return;
+
+	TOOLINFO ti = { sizeof(ti) };
+	ti.uFlags = TTF_IDISHWND | TTF_TRACK | TTF_ABSOLUTE | TTF_TRANSPARENT;
+	ti.hwnd = hStatic;
+	ti.uId = (UINT_PTR)hStatic;
+	ti.lpszText = const_cast<char*>(m_text.c_str());
+
+	// Anchor the tip just below the icon; the system keeps it on screen.
+	KillTimer(hStatic, HoverTimerId);
+	SendMessage(hTooltip, TTM_TRACKPOSITION, 0, MAKELPARAM(rc.left, rc.bottom + 4));
+	SendMessage(hTooltip, TTM_TRACKACTIVATE, TRUE, (LPARAM)&ti);
+
+	m_shown = true;
+	SetTimer(hStatic, CheckTimerId, CheckIntervalMs, nullptr);
+	InvalidateRect(hStatic, nullptr, TRUE);
+}
+
+void TooltipHelper::HideTip()
+{
+	if (!m_shown)
+		return;
+
+	if (hTooltip && hStatic)
+	{
+		TOOLINFO ti = { sizeof(ti) };
+		ti.uFlags = TTF_IDISHWND | TTF_TRACK | TTF_ABSOLUTE | TTF_TRANSPARENT;
+		ti.hwnd = hStatic;
+		ti.uId = (UINT_PTR)hStatic;
+		SendMessage(hTooltip, TTM_TRACKACTIVATE, FALSE, (LPARAM)&ti);
+	}
+
+	m_shown = false;
+	if (hStatic && IsWindow(hStatic))
+	{
+		KillTimer(hStatic, CheckTimerId);
+		InvalidateRect(hStatic, nullptr, TRUE);
+	}
 }
 
 LRESULT CALLBACK TooltipHelper::StaticProc(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam)
@@ -4687,17 +4987,78 @@ LRESULT TooltipHelper::OnStaticMessage(HWND hWnd, UINT msg, WPARAM wParam, LPARA
 			m_hovered = true;
 			TRACKMOUSEEVENT tme = { sizeof(tme), TME_LEAVE, hWnd, 0 };
 			TrackMouseEvent(&tme);
+
+			// Show the tip automatically after a short hover.
+			SetTimer(hWnd, HoverTimerId, HoverDelayMs, nullptr);
+			InvalidateRect(hWnd, nullptr, TRUE);
+		}
+
+		// Keep the state in sync in case the system hid the tip window.
+		if (m_shown && !IsWindowVisible(hTooltip))
+		{
+			m_shown = false;
 			InvalidateRect(hWnd, nullptr, TRUE);
 		}
 		break;
 	case WM_MOUSELEAVE:
+		// A tip covering the icon may cause a spurious leave while the cursor
+		// is still on the icon, so verify with the actual cursor position.
+		if (IsCursorInside())
+			break;
+
 		if (m_hovered)
 		{
 			m_hovered = false;
 			InvalidateRect(hWnd, nullptr, TRUE);
 		}
+		KillTimer(hWnd, HoverTimerId);
+		HideTip();
 		break;
+	case WM_LBUTTONDOWN:
+	case WM_RBUTTONDOWN:
+		// Click shows the tip immediately; clicking again hides it.
+		if (IsWindowVisible(hTooltip))
+			HideTip();
+		else
+			ShowTip();
+		return 0;
+	case WM_TIMER:
+		if (wParam == HoverTimerId)
+		{
+			KillTimer(hWnd, HoverTimerId);
+			if (m_hovered && IsCursorInside())
+				ShowTip();
+		}
+		else if (wParam == CheckTimerId)
+		{
+			// Fallback in case the leave notification got lost.
+			if (!IsCursorInside())
+				HideTip();
+		}
+		break;
+	case WM_NCDESTROY:
+	{
+		// The tip is a child of the icon and is already gone at this point.
+		WNDPROC oldProc = oldStaticProc;
+
+		KillTimer(hWnd, HoverTimerId);
+		KillTimer(hWnd, CheckTimerId);
+		hTooltip = nullptr;
+		oldStaticProc = nullptr;
+		hStatic = nullptr;
+		TooltipHelperMap.erase(hWnd);
+		m_shown = false;
+		m_hovered = false;
+		m_text.clear();
+		SetWindowLongPtr(hWnd, GWLP_USERDATA, 0);
+
+		return oldProc ? CallWindowProc(oldProc, hWnd, msg, wParam, lParam)
+			: DefWindowProc(hWnd, msg, wParam, lParam);
 	}
+	}
+
+	if (!oldStaticProc)
+		return DefWindowProc(hWnd, msg, wParam, lParam);
 
 	return CallWindowProc(oldStaticProc, hWnd, msg, wParam, lParam);
 }
@@ -4709,9 +5070,13 @@ void TooltipHelper::DrawCircle(HWND hWnd, HDC hdc)
 
 	bool dark = ExtConfigs::EnableDarkMode;
 	COLORREF bgColor = dark ? RGB(32, 32, 32) : GetSysColor(COLOR_BTNFACE);
-	COLORREF textColor = dark
-		? (m_hovered ? RGB(180, 225, 255) : RGB(120, 190, 255))
-		: (m_hovered ? RGB(0, 140, 255) : RGB(0, 90, 200));
+	COLORREF textColor;
+	if (m_shown)
+		textColor = dark ? RGB(255, 215, 120) : RGB(210, 120, 0);
+	else if (m_hovered)
+		textColor = dark ? RGB(180, 225, 255) : RGB(0, 140, 255);
+	else
+		textColor = dark ? RGB(120, 190, 255) : RGB(0, 90, 200);
 
 	HBRUSH bg = CreateSolidBrush(bgColor);
 	FillRect(hdc, &rc, bg);

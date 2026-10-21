@@ -1,4 +1,5 @@
 #include "CNewTeamTypes.h"
+#include "../../Miscs/Hooks.INI.h"
 #include "../CNewTaskforce/CNewTaskforce.h"
 #include "../CNewScript/CNewScript.h"
 #include "../CNewTrigger/CNewTrigger.h"
@@ -27,7 +28,7 @@
 
 HWND CNewTeamTypes::m_hwnd;
 CFinalSunDlg* CNewTeamTypes::m_parent;
-CINI& CNewTeamTypes::map = CINI::CurrentDocument;
+CINIExt& CNewTeamTypes::map = CINIExt::CurrentDocument;
 MultimapHelper& CNewTeamTypes::rules = Variables::RulesMap;
 HWND CNewTeamTypes::hSelectedTeam;
 HWND CNewTeamTypes::hNewTeam;
@@ -74,6 +75,8 @@ HWND CNewTeamTypes::hSearchReference;
 HWND CNewTeamTypes::hTurnToTaskforce;
 HWND CNewTeamTypes::hTurnToScript;
 HWND CNewTeamTypes::hTurnToTag;
+HWND CNewTeamTypes::hTurnToTransportWaypoint;
+HWND CNewTeamTypes::hTurnToWaypoint;
 bool CNewTeamTypes::TaskforceListChanged = false;
 bool CNewTeamTypes::ScriptListChanged = false;
 bool CNewTeamTypes::TagListChanged = false;
@@ -223,6 +226,8 @@ void CNewTeamTypes::Initialize(HWND& hWnd)
     hTurnToTaskforce = GetDlgItem(hWnd, Controls::TurnToTaskforce);
     hTurnToScript = GetDlgItem(hWnd, Controls::TurnToScript);
     hTurnToTag = GetDlgItem(hWnd, Controls::TurnToTag);
+    hTurnToTransportWaypoint = GetDlgItem(hWnd, Controls::TurnToTransportWaypoint);
+    hTurnToWaypoint = GetDlgItem(hWnd, Controls::TurnToWaypoint);
     hDragPoint = GetDlgItem(hWnd, Controls::DragPoint);
 
     mindControlDecisions.clear();
@@ -365,7 +370,7 @@ void CNewTeamTypes::Update(HWND& hWnd)
     ExtraWindow::ClearComboKeepText(hWaypoint);
     ExtraWindow::ClearComboKeepText(hTransportWaypoint);
     vcbTransportWaypoint.AddString("None");
-    if (auto pSection = CINI::CurrentDocument->GetSection("Waypoints"))
+    if (auto pSection = CINIExt::CurrentDocument->GetSection("Waypoints"))
     {
         FString output;
         for (auto& pair : pSection->GetEntities())
@@ -909,6 +914,14 @@ BOOL CALLBACK CNewTeamTypes::DlgProc(HWND hWnd, UINT Msg, WPARAM wParam, LPARAM 
         case Controls::TurnToTag:
             if (CODE == BN_CLICKED)
                 OnClickTurnToTag();
+            break;
+        case Controls::TurnToTransportWaypoint:
+            if (CODE == BN_CLICKED)
+                OnClickTurnToTransportWaypoint();
+            break;
+        case Controls::TurnToWaypoint:
+            if (CODE == BN_CLICKED)
+                OnClickTurnToWaypoint();
             break;
         case Controls::SelectedTeam:
             if (CODE == CBN_SELCHANGE)
@@ -1699,11 +1712,22 @@ void CNewTeamTypes::OnSelchangeTeamtypes(bool edited)
             else
                 SendMessage(hwnd, WM_SETTEXT, 0, (LPARAM)text);
         };
+        auto SetWpCurSel = [](VirtualComboBoxEx& vcb, const char* text)
+        {
+            FString wp = text;
+            if (wp != "None")
+			    wp += " ";
+			int idx = vcb.FindStringExactStart(wp);
+            if (idx != CB_ERR)
+				vcb.SetCurSel(idx);
+			else
+				vcb.SetEditText(text);
+        };
 
         SetCurSel(hVeteranLevel, map.GetString(pID, "VeteranLevel").GetString());
         SetCurSel(hTechlevel, map.GetString(pID, "TechLevel").GetString());
-        SetCurSel(hTransportWaypoint, tWaypoint.GetString());
-        SetCurSel(hWaypoint, waypoint.GetString());
+        SetWpCurSel(vcbTransportWaypoint, tWaypoint.GetString());
+        SetWpCurSel(vcbWaypoint, waypoint.GetString());
         SendMessage(hPriority, WM_SETTEXT, 0, (LPARAM)map.GetString(pID, "Priority").GetString());
         SendMessage(hMax, WM_SETTEXT, 0, (LPARAM)map.GetString(pID, "Max").GetString());
         SetCurSel(hGroup, map.GetString(pID, "Group").GetString());
@@ -1831,6 +1855,40 @@ void CNewTeamTypes::OnClickTurnToTag()
     SendMessage(dlg, CB_SETCURSEL, idx, NULL);
     editor.OnSelchangeTrigger();
     SetWindowPos(editor.GetHandle(), HWND_TOP, 0, 0, 0, 0, SWP_NOMOVE | SWP_NOSIZE | SWP_SHOWWINDOW);
+}
+
+void CNewTeamTypes::OnClickTurnToTransportWaypoint()
+{
+    if (SelectedTeamIndex < 0)
+        return;
+
+    FString value = vcbTransportWaypoint.GetSelectedText(true);
+	FString::TrimIndex(value);
+    if (auto pCord = CINIExt::CurrentDocument->TryGetString("Waypoints", value))
+    {
+        auto second = atoi(*pCord);
+        if (second > 0)
+        {
+            CObjectSearch::MoveToMapCoord(second / 1000, second % 1000);
+        }
+    }
+}
+
+void CNewTeamTypes::OnClickTurnToWaypoint()
+{
+    if (SelectedTeamIndex < 0)
+        return;
+
+    FString value = vcbWaypoint.GetSelectedText(true);
+    FString::TrimIndex(value);
+    if (auto pCord = CINIExt::CurrentDocument->TryGetString("Waypoints", value))
+    {
+        auto second = atoi(*pCord);
+        if (second > 0)
+        {
+            CObjectSearch::MoveToMapCoord(second / 1000, second % 1000);
+        }
+    }
 }
 
 void CNewTeamTypes::OnClickNewTeam()
@@ -1969,12 +2027,12 @@ void CNewTeamTypes::OnClickCloTeam(HWND& hWnd)
         auto key = CINI::GetAvailableKey("TeamTypes");
         auto value = CMapDataExt::GetAvailableIndex(EIndexType::Team);
 
-        CINI::CurrentDocument->WriteString("TeamTypes", key, value);
+        CINIExt::CurrentDocument->WriteString("TeamTypes", key, value);
 
-        auto oldname = CINI::CurrentDocument->GetString(CurrentTeamID, "Name", "New Teamtype");
+        auto oldname = CINIExt::CurrentDocument->GetString(CurrentTeamID, "Name", "New Teamtype");
         FString newName = ExtraWindow::GetCloneName(oldname);
 
-        CINI::CurrentDocument->WriteString(value, "Name", newName);
+        CINIExt::CurrentDocument->WriteString(value, "Name", newName);
 
         auto copyitem = [&value](FString key)
             {

@@ -308,6 +308,42 @@ void DirectXCore::ClearTextures()
     Logger::Raw("[DirectXCore] Clear textures.\n");
 }
 
+void DirectXCore::DiscardPendingDraws()
+{
+    m_drawCommands.clear();
+}
+
+void DirectXCore::InvalidateGLTracking()
+{
+    if (!m_bUseOpenGL)
+        return;
+
+    // (GLuint)-1 is never a valid object name or texture unit: using it as an
+    // "unknown" sentinel forces the next tracked bind to actually execute.
+    const GLuint unknown = static_cast<GLuint>(-1);
+    m_glTrackedProgram = unknown;
+    m_glTrackedTexture = unknown;
+    m_glTrackedTexture1 = unknown;
+    m_glTrackedVAO = unknown;
+    m_glTrackedFBO = unknown;
+    m_glTrackedActiveTexUnit = unknown;
+}
+
+void DirectXCore::RemoveTexturesFor(const void* pData)
+{
+    for (auto it = m_textureMap.begin(); it != m_textureMap.end();)
+    {
+        if (it->first.pData != pData)
+        {
+            ++it;
+            continue;
+        }
+        if (m_bUseOpenGL && it->second && it->second->glTexture)
+            glDeleteTextures(1, &it->second->glTexture);
+        it = m_textureMap.erase(it);
+    }
+}
+
 void DirectXCore::ClearTileTextures()
 {
     if (m_bUseOpenGL)
@@ -2374,6 +2410,9 @@ void DirectXCore::Render()
     if (!m_bInitialized)
         return;
 
+    // Same as above: any raw GL call bypassing the tracked wrappers desyncs the cache.
+    InvalidateGLTracking();
+
     // If nothing to render at all, skip entirely
     if (m_drawCommands.empty() && m_lineEntries.empty())
         return;
@@ -2453,6 +2492,11 @@ void DirectXCore::RenderScreenSpaceOnly()
     if (!m_bInitialized)
         return;
 
+    // External callers (animation preview, ...) may have triggered raw GL calls
+    // such as texture creation. Invalidate the cache first so the program,
+    // texture and FBO binds below really execute.
+    InvalidateGLTracking();
+
     if (m_bUseOpenGL)
     {
         GL_RenderFinalToBackBuffer();
@@ -2469,6 +2513,14 @@ void DirectXCore::RenderScreenSpaceOnly()
     RenderScreenSpaceContent();
     m_pSwapChain->Present(1, 0);
     m_drawCommands.clear();
+
+    // Restore the clean canvas in the BackBuffer after presenting. The frame is
+    // already on screen; this only keeps screen-space content out of the
+    // BackBuffer. Otherwise a following UpdateBackgroundCache() (D3D path only)
+    // would bake that frame into the background cache, and since the final
+    // composite uses LINEAR upscaling when renderScale != 1, the palette index 0
+    // colour would bleed into the image edges.
+    RestoreBackgroundFromCache();
 }
 
 TextureResource *DirectXCore::LoadTexture(const ImageDataView &view, BGRStruct color, bool ignoreTransparent)
@@ -2496,7 +2548,17 @@ TextureResource *DirectXCore::LoadTexture(const ImageDataView &view, BGRStruct c
             if (opacity < 255 && ignoreTransparent)
                 opacity = 0;
             BGRStruct color = view.pPalette->Data[idx];
-            uint32_t rgba = (color.R << 0) | (color.G << 8) | (color.B << 16) | (opacity << 24);
+            // Fully transparent pixels (palette index 0) keep alpha = 0 only and
+            // get their RGB zeroed. Otherwise they would carry the index 0 colour
+            // (usually the magenta used as transparent colour) and any later
+            // bilinear/linear stage (canvas upscaling, linear sampling) would
+            // bleed that magenta into the edges. Since alpha 0 pixels never
+            // contribute to the result, zeroing their RGB cannot affect normal
+            // rendering.
+            const uint32_t rgb = (opacity == 0)
+                                     ? 0u
+                                     : ((color.R << 0) | (color.G << 8) | (color.B << 16));
+            uint32_t rgba = rgb | (opacity << 24);
             rgbaData[y * w + x] = rgba;
         }
     }
@@ -3243,7 +3305,11 @@ void DrawShapes::RasterEllipseFill(Canvas &c, float cx, float cy,
     if (rx < .5f || ry < .5f)
         return;
     int y0 = (int)std::floor(cy - ry);
+    if (y0 < 0)
+        y0 = 0;
     int y1 = (int)std::ceil(cy + ry);
+    if (y1 >= c.h)
+        y1 = c.h - 1;
     for (int y = y0; y <= y1; ++y)
     {
         float dy = y - cy;
@@ -3252,7 +3318,11 @@ void DrawShapes::RasterEllipseFill(Canvas &c, float cx, float cy,
             continue;
         float halfW = rx * std::sqrt(1.f - t * t);
         int xL = (int)std::floor(cx - halfW);
+        if (xL < 0)
+            xL = 0;
         int xR = (int)std::ceil(cx + halfW);
+        if (xR >= c.w)
+            xR = c.w - 1;
         for (int x = xL; x <= xR; ++x)
         {
             float dx = (float)x - cx;
@@ -3277,7 +3347,11 @@ void DrawShapes::RasterEllipseClear(Canvas &c, float cx, float cy,
 {
     // Clears the interior of an ellipse by setting pixels to 0 (fully transparent).
     int y0 = (int)std::floor(cy - ry);
+    if (y0 < 0)
+        y0 = 0;
     int y1 = (int)std::ceil(cy + ry);
+    if (y1 >= c.h)
+        y1 = c.h - 1;
     for (int y = y0; y <= y1; ++y)
     {
         float dy = y - cy;
@@ -3286,9 +3360,136 @@ void DrawShapes::RasterEllipseClear(Canvas &c, float cx, float cy,
             continue;
         float halfW = rx * std::sqrt(1.f - t * t);
         int xL = (int)std::floor(cx - halfW);
+        if (xL < 0)
+            xL = 0;
         int xR = (int)std::ceil(cx + halfW);
+        if (xR >= c.w)
+            xR = c.w - 1;
         for (int x = xL; x <= xR; ++x)
             c.SetPixel(x, y, 0u);
+    }
+}
+
+void DrawShapes::RasterEllipseBorder(float cx, float cy, float rx, float ry,
+                                     uint32_t rgba, float thickness, UINT depth,
+                                     bool bScreenSpace, bool bAlwaysOnTop,
+                                     float dashLength, float gapLength,
+                                     int vpW, int vpH)
+{
+    const float twoPi = 6.283185307179586f;
+    // Step size adapts to the local curvature of the ellipse:
+    //  - Sagitta bound: each chord deviates from the true arc by <= 0.25px,
+    //    so the outline cannot be perceived as a polyline at any zoom.
+    //  - Angle bound: adjacent chords turn by <= ~1.15 degrees, so no visible
+    //    corners appear even at large zoom.
+    // Where curvature is high (ends of the major axis) chords get shorter
+    // (denser); where it is low (ends of the minor axis) they get longer.
+    const float maxSagitta = 0.25f;
+    const float maxAngleStep = 0.02f;
+    const float halfT = thickness * 0.5f;
+    const bool useDash = (dashLength > 0.f && gapLength > 0.f);
+    const float cycleLen = dashLength + gapLength;
+    const float rxry = rx * ry;
+
+    float theta = 0.f;
+    float posAlong = 0.f; // arc length accumulated along the perimeter, keeps dash phase globally continuous
+    float prevX = cx + rx;
+    float prevY = cy;
+    float prevTx = 0.f; // unit tangent at the previous point (theta = 0)
+    float prevTy = 1.f;
+
+    while (true)
+    {
+        float s = std::sin(theta), c = std::cos(theta);
+        float A = rx * rx * s * s + ry * ry * c * c;
+        float Rlocal = (A * std::sqrt(A)) / rxry;
+
+        float dTheta = std::min(
+            std::sqrt((8.f * maxSagitta) / std::max(Rlocal, 1e-4f)),
+            maxAngleStep);
+        // Chord length floor: avoid over-tessellating tiny ellipses.
+        float chordFloor = 0.5f / std::sqrt(A);
+        if (dTheta < chordFloor)
+            dTheta = chordFloor;
+
+        float thetaNext = theta + dTheta;
+        if (thetaNext >= twoPi)
+            thetaNext = twoPi;
+        if (thetaNext - theta < 1e-6f)
+            break;
+
+        float s2 = std::sin(thetaNext), c2 = std::cos(thetaNext);
+        float x1 = cx + rx * c2;
+        float y1 = cy + ry * s2;
+        float A2 = rx * rx * s2 * s2 + ry * ry * c2 * c2;
+
+        float tx = -rx * s / std::sqrt(A);
+        float ty = ry * c / std::sqrt(A);
+        float tx2 = -rx * s2 / std::sqrt(A2);
+        float ty2 = ry * c2 / std::sqrt(A2);
+
+        // Extend both endpoints by half the line thickness along the tangent,
+        // so flat-capped quads of neighbouring chords overlap seamlessly.
+        float x0 = prevX - prevTx * halfT;
+        float y0 = prevY - prevTy * halfT;
+        float xe = x1 + tx2 * halfT;
+        float ye = y1 + ty2 * halfT;
+
+        float segLen = 0.f;
+        if (useDash || (vpW > 0 && vpH > 0))
+        {
+            float dx = xe - x0, dy = ye - y0;
+            segLen = std::sqrt(dx * dx + dy * dy);
+        }
+
+        // Viewport culling: only submit segments that can be visible.
+        bool visible = true;
+        if (vpW > 0 && vpH > 0)
+        {
+            float minX = std::min(x0, xe) - halfT;
+            float maxX = std::max(x0, xe) + halfT;
+            float minY = std::min(y0, ye) - halfT;
+            float maxY = std::max(y0, ye) + halfT;
+            visible = (minX <= (float)(vpW - 1) && maxX >= 0.f &&
+                       minY <= (float)(vpH - 1) && maxY >= 0.f);
+        }
+
+        if (visible)
+        {
+            if (useDash)
+            {
+                if (segLen >= 1e-4f)
+                {
+                    float startPhase = posAlong - std::floor(posAlong / cycleLen) * cycleLen;
+                    float pos = startPhase;
+                    float dx = xe - x0, dy = ye - y0;
+                    while (pos < segLen)
+                    {
+                        float dashEnd = std::min(pos + dashLength, segLen);
+                        float t0 = pos / segLen, t1 = dashEnd / segLen;
+                        m_dx->AddLineEntry(x0 + dx * t0, y0 + dy * t0,
+                                           x0 + dx * t1, y0 + dy * t1,
+                                           rgba, thickness, depth,
+                                           bScreenSpace, bAlwaysOnTop);
+                        pos += cycleLen;
+                    }
+                }
+            }
+            else
+            {
+                m_dx->AddLineEntry(x0, y0, xe, ye, rgba, thickness, depth,
+                                   bScreenSpace, bAlwaysOnTop);
+            }
+        }
+        posAlong += segLen;
+
+        if (thetaNext >= twoPi - 1e-6f)
+            break;
+        prevX = x1;
+        prevY = y1;
+        prevTx = tx2;
+        prevTy = ty2;
+        theta = thetaNext;
     }
 }
 
@@ -3576,6 +3777,55 @@ void DrawShapes::DrawRect(float x, float y, float w, float h,
     }
 }
 
+// Current render viewport size (client pixels for screen space, offscreen
+// target pixels for world space). Shapes outside this rect are not visible.
+static void GetRenderViewport(DirectXCore *dx, bool bScreenSpace, int &vpW, int &vpH)
+{
+    vpW = 0;
+    vpH = 0;
+    if (dx)
+    {
+        vpW = dx->GetClientWidth();
+        vpH = dx->GetClientHeight();
+        if (!bScreenSpace)
+        {
+            vpW = (int)(vpW * dx->GetZoomOut());
+            vpH = (int)(vpH * dx->GetZoomOut());
+        }
+    }
+}
+
+// Computes the intersection of an axis-aligned rectangle (in the same
+// coordinate space as the shapes being drawn) with the current render
+// viewport, so shapes only rasterize pixels that are actually visible.
+// Returns false when the rectangle is entirely off-screen.
+static bool ClipToViewport(DirectXCore *dx, bool bScreenSpace,
+                           int bboxX, int bboxY, int bboxW, int bboxH,
+                           int &outX, int &outY, int &outW, int &outH)
+{
+    int vpW, vpH;
+    GetRenderViewport(dx, bScreenSpace, vpW, vpH);
+    if (vpW <= 0 || vpH <= 0)
+    {
+        outX = bboxX;
+        outY = bboxY;
+        outW = bboxW;
+        outH = bboxH;
+        return true;
+    }
+    int x0 = std::max(bboxX, 0);
+    int y0 = std::max(bboxY, 0);
+    int x1 = std::min(bboxX + bboxW - 1, vpW - 1);
+    int y1 = std::min(bboxY + bboxH - 1, vpH - 1);
+    if (x1 < x0 || y1 < y0)
+        return false;
+    outX = x0;
+    outY = y0;
+    outW = x1 - x0 + 1;
+    outH = y1 - y0 + 1;
+    return true;
+}
+
 void DrawShapes::DrawEllipse(float cx, float cy, float rx, float ry,
                              const EllipseParams &params)
 {
@@ -3584,7 +3834,6 @@ void DrawShapes::DrawEllipse(float cx, float cy, float rx, float ry,
 
     bool hasFill = !params.fillColor.IsTransparent();
     bool hasBorder = (params.borderWidth > 0.f && !params.borderColor.IsTransparent());
-    bool useDash = (params.dashLength > 0.f && params.gapLength > 0.f);
 
     if (!hasFill && !hasBorder)
         return;
@@ -3592,22 +3841,26 @@ void DrawShapes::DrawEllipse(float cx, float cy, float rx, float ry,
     if (hasFill)
     {
         float pad = 2.f;
-        float originX = std::floor(cx - rx - pad);
-        float originY = std::floor(cy - ry - pad);
-        int cw = (int)std::ceil((rx + pad) * 2.f) + 2;
-        int ch = (int)std::ceil((ry + pad) * 2.f) + 2;
+        int bboxX = (int)std::floor(cx - rx - pad);
+        int bboxY = (int)std::floor(cy - ry - pad);
+        int bboxW = (int)std::ceil((rx + pad) * 2.f) + 2;
+        int bboxH = (int)std::ceil((ry + pad) * 2.f) + 2;
 
-        Canvas canvas;
-        canvas.Resize(cw, ch);
+        int vx0, vy0, vw, vh;
+        if (ClipToViewport(m_dx, params.bScreenSpace, bboxX, bboxY, bboxW, bboxH, vx0, vy0, vw, vh))
+        {
+            Canvas canvas;
+            canvas.Resize(vw, vh);
 
-        float lcx = cx - originX;
-        float lcy = cy - originY;
+            float lcx = cx - vx0;
+            float lcy = cy - vy0;
 
-        ShapeColor fc = params.fillColor;
-        fc.a *= params.opacity;
-        RasterEllipseFill(canvas, lcx, lcy, rx, ry, ColorToU32(fc));
+            ShapeColor fc = params.fillColor;
+            fc.a *= params.opacity;
+            RasterEllipseFill(canvas, lcx, lcy, rx, ry, ColorToU32(fc));
 
-        FlushCanvas(canvas, originX, originY, 1.f, params.bScreenSpace);
+            FlushCanvas(canvas, (float)vx0, (float)vy0, 1.f, params.bScreenSpace);
+        }
     }
 
     if (hasBorder && m_dx)
@@ -3625,73 +3878,15 @@ void DrawShapes::DrawEllipse(float cx, float cy, float rx, float ry,
             depth = params.bScreenSpace ? 0 : m_dx->GetNextDepth();
         }
 
-        if (useDash)
-        {
-            // Dashed border: use AddLineEntry for individual dash segments
-            int segs = params.segments > 0
-                           ? params.segments
-                           : std::max(32, (int)(2.f * kPi * std::max(rx, ry) / 1.5f));
+        int vpW, vpH;
+        GetRenderViewport(m_dx, params.bScreenSpace, vpW, vpH);
 
-            float prevPx = 0.f, prevPy = 0.f;
-            for (int i = 0; i <= segs; ++i)
-            {
-                float angle = 2.f * kPi * i / segs;
-                float px = cx + rx * std::cos(angle);
-                float py = cy + ry * std::sin(angle);
-
-                if (i == 0)
-                {
-                    prevPx = px;
-                    prevPy = py;
-                    continue;
-                }
-
-                float dx = px - prevPx, dy = py - prevPy;
-                float segLen = std::sqrt(dx * dx + dy * dy);
-
-                if (segLen >= 1e-4f)
-                {
-                    float cycleLen = params.dashLength + params.gapLength;
-                    float pos = 0.f;
-                    while (pos < segLen)
-                    {
-                        float dashEnd = std::min(pos + params.dashLength, segLen);
-                        float t0 = pos / segLen, t1 = dashEnd / segLen;
-                        m_dx->AddLineEntry(
-                            prevPx + dx * t0, prevPy + dy * t0,
-                            prevPx + dx * t1, prevPy + dy * t1,
-                            rgba, params.borderWidth, depth, params.bScreenSpace, params.bAlwaysOnTop);
-                        pos += cycleLen;
-                    }
-                }
-                prevPx = px;
-                prevPy = py;
-            }
-        }
-        else
-        {
-            // Non-dashed border: use Canvas-based rasterization for
-            // a seamless hollow ellipse (no joint gaps).
-            float bw2 = params.borderWidth * 0.5f;
-            float pad = 2.f + bw2;
-            float originX = std::floor(cx - rx - pad);
-            float originY = std::floor(cy - ry - pad);
-            int cw = (int)std::ceil((rx + pad) * 2.f) + 2;
-            int ch = (int)std::ceil((ry + pad) * 2.f) + 2;
-
-            Canvas canvas;
-            canvas.Resize(cw, ch);
-
-            float lcx = cx - originX;
-            float lcy = cy - originY;
-
-            // 1. Fill outer ellipse (border region)
-            RasterEllipseFill(canvas, lcx, lcy, rx + bw2, ry + bw2, rgba);
-            // 2. Clear inner ellipse (create a transparent hole)
-            RasterEllipseClear(canvas, lcx, lcy, rx - bw2, ry - bw2);
-
-            FlushCanvas(canvas, originX, originY, 1.f, params.bScreenSpace, params.bAlwaysOnTop);
-        }
+        // Border is tessellated into GPU line-batch segments with a
+        // curvature-adaptive step (no per-frame Canvas / texture upload,
+        // only the on-screen portion is submitted).
+        RasterEllipseBorder(cx, cy, rx, ry, rgba, params.borderWidth, depth,
+                            params.bScreenSpace, params.bAlwaysOnTop,
+                            params.dashLength, params.gapLength, vpW, vpH);
     }
 }
 
@@ -5293,6 +5488,13 @@ void DirectXCore::GL_UploadTextureRGBA8(TextureResource *res, int w, int h, cons
     {
         glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA8, w, h, 0, GL_RGBA, GL_UNSIGNED_BYTE, pixels);
     }
+
+    // The raw glBindTexture above binds on the currently active texture unit and
+    // bypasses the cache. Without invalidating it, the later GL_BindTexture0/1
+    // calls would assume the texture is unchanged and skip the bind, so another
+    // pass would sample the wrong texture.
+    m_glTrackedTexture = static_cast<GLuint>(-1);
+    m_glTrackedTexture1 = static_cast<GLuint>(-1);
 }
 
 void DirectXCore::GL_UploadTextureR8(TextureResource *res, int w, int h, const uint8_t *pixels, bool flipY)
@@ -5319,6 +5521,10 @@ void DirectXCore::GL_UploadTextureR8(TextureResource *res, int w, int h, const u
     {
         glTexImage2D(GL_TEXTURE_2D, 0, GL_R8, w, h, 0, GL_RED, GL_UNSIGNED_BYTE, pixels);
     }
+
+    // Same as GL_UploadTextureRGBA8: invalidate the texture cache after a raw bind.
+    m_glTrackedTexture = static_cast<GLuint>(-1);
+    m_glTrackedTexture1 = static_cast<GLuint>(-1);
 }
 
 void DirectXCore::GL_UploadTextureDynamic(TextureResource *res, int w, int h, const uint32_t *pixels)
@@ -5340,6 +5546,10 @@ void DirectXCore::GL_UploadTextureDynamic(TextureResource *res, int w, int h, co
         glBindTexture(GL_TEXTURE_2D, res->glTexture);
         glTexSubImage2D(GL_TEXTURE_2D, 0, 0, 0, w, h, GL_RGBA, GL_UNSIGNED_BYTE, pixels);
     }
+
+    // Same as GL_UploadTextureRGBA8: invalidate the texture cache after a raw bind.
+    m_glTrackedTexture = static_cast<GLuint>(-1);
+    m_glTrackedTexture1 = static_cast<GLuint>(-1);
 }
 
 // ==========================================================================

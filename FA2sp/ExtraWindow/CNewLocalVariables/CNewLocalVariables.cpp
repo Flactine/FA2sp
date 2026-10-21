@@ -11,7 +11,7 @@
 
 HWND CNewLocalVariables::m_hwnd;
 CFinalSunDlg* CNewLocalVariables::m_parent;
-CINI& CNewLocalVariables::map = CINI::CurrentDocument;
+CINIExt& CNewLocalVariables::map = CINIExt::CurrentDocument;
 VirtualComboBoxEx CNewLocalVariables::vcbVariables;
 
 HWND CNewLocalVariables::hVariables;
@@ -230,9 +230,12 @@ void CNewLocalVariables::Update()
     return;
 }
 
-void CNewLocalVariables::OnSelchangeVariable(bool edited)
+void CNewLocalVariables::OnSelchangeVariable(bool edited, int index)
 {
-    SelectedIndex = SendMessage(hVariables, CB_GETCURSEL, NULL, NULL);
+    if (index >= 0)
+        SelectedIndex = index;
+    else
+        SelectedIndex = SendMessage(hVariables, CB_GETCURSEL, NULL, NULL);  
     if (SelectedIndex < 0 || SelectedIndex >= SendMessage(hVariables, CB_GETCOUNT, NULL, NULL))
     {
         SelectedKey = "";

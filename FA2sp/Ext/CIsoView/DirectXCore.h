@@ -193,6 +193,18 @@ public:
     void Cleanup();
     void ClearTextures();
     void ClearTileTextures();
+    // Drops draw commands that have not been output yet, so they cannot be
+    // rendered later by a pass with a different viewport/projection.
+    void DiscardPendingDraws();
+    // Invalidates the GL state cache. Parts of the code base call raw GL
+    // (texture uploads, GL_CopyScreenToTexture, ...) and therefore desync the
+    // tracked values; once desynced, GL_UseProgramTracked/GL_BindTexture0/...
+    // skip the actual bind and later passes use the wrong program or texture.
+    void InvalidateGLTracking();
+    // Drops all cached textures created from pData. The texture cache is keyed by
+    // the image object address, so a new object reusing a released address would
+    // otherwise get the old object's texture (wrong size and content).
+    void RemoveTexturesFor(const void* pData);
     void OnResize(HWND hwnd);
 
     TextureResource *LoadTexture(const ImageDataView &view, BGRStruct color = {0, 0, 0}, bool ignoreTransparent = false);
@@ -770,6 +782,15 @@ private:
 
     void RasterEllipseClear(Canvas &c, float cx, float cy,
                             float rx, float ry);
+
+    // Tessellates the ellipse border into GPU line-batch entries with
+    // curvature-adaptive step size (denser where curvature is high),
+    // culled against the render viewport.
+    void RasterEllipseBorder(float cx, float cy, float rx, float ry,
+                             uint32_t rgba, float thickness, UINT depth,
+                             bool bScreenSpace, bool bAlwaysOnTop,
+                             float dashLength, float gapLength,
+                             int vpW, int vpH);
 
     DirectXCore *m_dx;
 

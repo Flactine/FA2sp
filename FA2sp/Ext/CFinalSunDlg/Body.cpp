@@ -1,11 +1,14 @@
 #include "Body.h"
+#include "../../Miscs/Hooks.INI.h"
 
 #include "../../FA2sp.h"
 #include "../CIsoView/Body.h"
 #include "../CIsoView/DirectXCore.h"
+#include "../CIsoView/MapExport.h"
 #include "../CMapData/Body.h"
 #include "../CMapData/HeightGenerator.h"
 #include "../CFinalSunApp/Body.h"
+#include "../CTileSetBrowserView/Body.h"
 #include <CMapData.h>
 #include <CLoading.h>
 #include <CInputMessageBox.h>
@@ -312,18 +315,19 @@ BOOL CFinalSunDlgExt::OnCommandExt(WPARAM wParam, LPARAM lParam)
 			CIsoViewExt::MouseCenterPosition = {-1919810, -1919810};
 			this->MyViewFrame.Minimap.RedrawWindow(nullptr, nullptr, RDW_INVALIDATE | RDW_UPDATENOW);
 			::RedrawWindow(CFinalSunDlg::Instance->MyViewFrame.pIsoView->m_hWnd, 0, 0, RDW_UPDATENOW | RDW_INVALIDATE);
-			auto tmp = CIsoView::CurrentCommand->Command;
+			CIsoViewExt::BackupCurrentCommand();
+			TempValueHolder tmp(CTileSetBrowserViewExt::KeepCurrentCommand, true);
 			if (this->MyViewFrame.pTileSetBrowserFrame->View.CurrentMode == 1) {
 				HWND hParent = this->MyViewFrame.pTileSetBrowserFrame->DialogBar.GetSafeHwnd();
 				HWND hTileComboBox = ::GetDlgItem(hParent, 1366);
 				::SendMessage(hParent, WM_COMMAND, MAKEWPARAM(1366, CBN_SELCHANGE), (LPARAM)hTileComboBox);
-				CIsoView::CurrentCommand->Command = tmp;
+				CIsoViewExt::RestoreCurrentCommand();
 			}
 			else if (this->MyViewFrame.pTileSetBrowserFrame->View.CurrentMode == 2) {
 				HWND hParent = this->MyViewFrame.pTileSetBrowserFrame->DialogBar.GetSafeHwnd();
 				HWND hOverlayComboBox = ::GetDlgItem(hParent, 1367);
 				::SendMessage(hParent, WM_COMMAND, MAKEWPARAM(1367, CBN_SELCHANGE), (LPARAM)hOverlayComboBox);
-				CIsoView::CurrentCommand->Command = tmp;
+				CIsoViewExt::RestoreCurrentCommand();
 			}
 		}
 	};
@@ -797,7 +801,7 @@ BOOL CFinalSunDlgExt::OnCommandExt(WPARAM wParam, LPARAM lParam)
 		{
 			for (const auto& type : pSection->GetEntities())
 			{
-				auto thisTheater = CINI::CurrentDocument().GetString("Map", "Theater");
+				auto thisTheater = CINIExt::CurrentDocument().GetString("Map", "Theater");
 				if (STDHelpers::SplitString(type.second)[0] == thisTheater)
 				{
 					found = true;
@@ -884,13 +888,15 @@ BOOL CFinalSunDlgExt::OnCommandExt(WPARAM wParam, LPARAM lParam)
 	}
 	else if (wmID == 40165)
 	{
-		if (MapValidatorAlive)
+		if (MapValidatorAlive || CIsoViewExt::RenderingMap)
 		{
 			this->PlaySound(FASoundType::Error);
 			return TRUE;
 		}
 
 		bool endConfirmDialog = false;
+		int failedMaps = 0;
+		FString failedMapDetails;
 		auto setLighting = [](int id)
 		{
 			if (CFinalSunDlgExt::CurrentLighting != id)
@@ -946,11 +952,12 @@ BOOL CFinalSunDlgExt::OnCommandExt(WPARAM wParam, LPARAM lParam)
 				break;
 			}
 
-			auto thisTheater = CINI::CurrentDocument().GetString("Map", "Theater");
+			auto thisTheater = CINIExt::CurrentDocument().GetString("Map", "Theater");
 			thisTheater.MakeUpper();
 			if (thisTheater == "NEWURBAN")
 				thisTheater = "UBN";
 			FString theaterSuffix = thisTheater.Mid(0, 3);
+			auto oldIgnoreObjects = std::move(CIsoViewExt::MapRendererIgnoreObjects);
 			CIsoViewExt::MapRendererIgnoreObjects.clear();
 			if (CIsoViewExt::RenderIgnoreObjects)
 			{
@@ -978,11 +985,14 @@ BOOL CFinalSunDlgExt::OnCommandExt(WPARAM wParam, LPARAM lParam)
 					if (Variables::RulesMap.GetBool(ID, "InvisibleInGame"))
 						CIsoViewExt::MapRendererIgnoreObjects.insert(ID);
 				}
-				const auto& overlays = Variables::RulesMap.GetSection("OverlayTypes");
-				for (auto& [_, ID] : overlays)
+				const auto& overlays = Variables::RulesMap.ParseIndicies("OverlayTypes", true);
+				for (int i = 0; i < overlays.size(); ++i)
 				{
-					if (Variables::RulesMap.GetBool(ID, "IsRubble"))
-						CIsoViewExt::MapRendererIgnoreObjects.insert(ID);
+					const auto& value = overlays[i];
+					if (Variables::RulesMap.GetBool(value, "IsRubble"))
+						CIsoViewExt::MapRendererIgnoreObjects.insert(value);
+					if (i == 100 || i == 101 || i == 231 || i == 232) // hidden bridges
+						CIsoViewExt::MapRendererIgnoreObjects.insert(value);
 				}
 			}
 
@@ -994,11 +1004,35 @@ BOOL CFinalSunDlgExt::OnCommandExt(WPARAM wParam, LPARAM lParam)
 			// makes subsequent draws/screenshots target an out-of-map area
 			// (black output and bogus observe coordinates).
 			ppmfc::CPoint oldViewPos = pIsoView->ViewPosition;
+			auto scrollState = [&](LONG object)
+			{
+				SCROLLBARINFO info{};
+				info.cbSize = sizeof(info);
+				if (!GetScrollBarInfo(pIsoView->GetSafeHwnd(), object, &info)) return UINT(ESB_ENABLE_BOTH);
+				return UINT((info.rgstate[1] & STATE_SYSTEM_UNAVAILABLE ? ESB_DISABLE_LEFT : 0)
+					| (info.rgstate[5] & STATE_SYSTEM_UNAVAILABLE ? ESB_DISABLE_RIGHT : 0));
+			};
+			const UINT oldVerticalScroll = scrollState(OBJID_VSCROLL);
+			const UINT oldHorizontalScroll = scrollState(OBJID_HSCROLL);
 
 			int& height = CMapData::Instance->Size.Height;
 			int& width = CMapData::Instance->Size.Width;
 			int startX, startY, endX, endY;
 			int startPointX, startPointY, endPointX, endPointY;
+
+			std::vector<std::unique_ptr<TempValueHolder<bool>>> rangeHolders;
+			if (!CIsoViewExt::RenderFullMap)
+			{
+				const int localWidth = std::min(CMapData::Instance->LocalSize.Width, CMapData::Instance->Size.Width);
+				const int localHeight = std::min(CMapData::Instance->LocalSize.Height, CMapData::Instance->Size.Height);
+				if (localWidth <= 0 || localHeight <= 0)
+				{
+					const auto& local = CMapData::Instance->LocalSize;
+					Logger::Info("Local size %d,%d,%d,%d is invalid for a %dx%d map; exporting the full map instead\n",
+						local.Left, local.Top, local.Width, local.Height, width, height);
+					ADD_TEMP_HOLDER(rangeHolders, CIsoViewExt::RenderFullMap, true);
+				}
+			}
 			if (CIsoViewExt::RenderFullMap)
 			{
 				startX = width - 1;
@@ -1029,138 +1063,238 @@ BOOL CFinalSunDlgExt::OnCommandExt(WPARAM wParam, LPARAM lParam)
 			if (CIsoViewExt::RenderFullMap)
 				endPointY -= 15;
 
+			FString failureStage = "Output dimensions";
+			HRESULT exportStatus = S_OK;
+			const int outputW = endPointX - startPointX;
+			const int outputH = endPointY - startPointY;
+			const uint64_t stride = outputW > 0 ? (uint64_t(outputW) * 3 + 3) & ~uint64_t(3) : 0;
+			const uint64_t imageBytes = outputH > 0 ? stride * uint64_t(outputH) : 0;
+			const bool streaming = imageBytes > (uint64_t(1) << 29);
+			// The WIC encoders reject a single dimension above 65535 pixels, so
+			// PNG beyond that cannot use the in-memory GDI+ save path and is
+			// written by the built-in streaming encoder instead.
+			const bool exceedsWicDimension = outputW > 65535 || outputH > 65535;
+			bool saveAsPng = CIsoViewExt::RenderSaveAsPNG;
+			bool useEncoder = streaming;
+			MapExportFile output;
+			std::unique_ptr<Bitmap> bitmap;
 			VEHGuard v(false);
-			try {
-				CIsoViewExt::pFullBitmap = new Bitmap(endPointX - startPointX, endPointY - startPointY, PixelFormat24bppRGB);
-			}
-			catch (const std::bad_alloc&) {
-				if (!batchProcess)
-				{
-					const FString title = Translations::TranslateOrDefault(
-						"Error", "Error"
-					);
-					const FString message = Translations::TranslateOrDefault(
-						"AllocFullMapBitmapFailed", "Memory allocation failed, cannot render full map."
-					);
-					::MessageBox(CFinalSunDlg::Instance()->MyViewFrame.pIsoView->m_hWnd, message, title, MB_ICONWARNING);
-				}
-				CIsoViewExt::pFullBitmap = nullptr;
-			}
-
-			if (CIsoViewExt::pFullBitmap)
+			try
 			{
-				Graphics gInit(CIsoViewExt::pFullBitmap);
-				gInit.Clear(Color(0, 0, 0, 0));
-
-				CRect r;
-				pIsoView->GetWindowRect(&r);
-				pIsoView->AdaptRectForSecondScreen(&r);
-
-				// Use client rect dimensions for tile advancement to avoid gaps
-				// caused by scrollbars (DX offscreen texture is client-area sized).
-				CRect cr;
-				pIsoView->GetClientRect(&cr);
-				int tileW = cr.Width();
-				int tileH = cr.Height();
-				if (tileW <= 0 || tileH <= 0) { tileW = r.Width(); tileH = r.Height(); }
-
-				CRect validRange;
-				validRange.left = 30 * (height + width + startY - startX) - (r.right - r.left) / 2 - r.left;
-				validRange.top = 15 * (startY + startX) - (r.bottom - r.top) / 2 - r.top;
-				validRange.right = 30 * (height + width + endY - endX) - (r.right - r.left) / 2 - r.left;
-				validRange.bottom = 15 * (endY + endX) - (r.bottom - r.top) / 2 - r.top;
-
-				pIsoView->ViewPosition.y = validRange.top;
-
-				int totalTileCount = ((validRange.right - validRange.left + tileW) / tileW + 1)
-					* ((validRange.bottom - validRange.top + tileH) / tileH + 1) - 1;
-
-				CUpdateProgress progress(
-					Translations::TranslateOrDefault("MapRendererProgressText",
-						"Rendering, please wait..."), NULL);
-				progress.ShowWindow(SW_SHOW);
-				progress.UpdateWindow();
-				progress.ProgressBar.SetRange(0, totalTileCount + 1);
-				progress.ProgressBar.SetPos(0);
-
-				EnableScrollBar(pIsoView->GetSafeHwnd(), SB_BOTH, ESB_DISABLE_BOTH);
-
-				int currentTile = 0;
-				static int renderFailedCount;
-				renderFailedCount = 0;
-				while (pIsoView->ViewPosition.y < validRange.bottom + tileH)
+				do
 				{
-					pIsoView->ViewPosition.x = validRange.left;
-					while (pIsoView->ViewPosition.x < validRange.right + tileW)
+					result = Gdiplus::InvalidParameter;
+					if (outputW <= 0 || outputH <= 0 || stride > INT_MAX) break;
+					if (!saveAsPng && (outputW > 65535 || outputH > 65535))
 					{
-						::SetScrollPos(pIsoView->GetSafeHwnd(), SB_VERT, pIsoView->ViewPosition.y / 30 - width / 2 + 4, TRUE);
-						::SetScrollPos(pIsoView->GetSafeHwnd(), SB_HORZ, pIsoView->ViewPosition.x / 60 - height / 2 + 1, TRUE);
-						CIsoViewExt::RenderTileSuccess = false;
-
-						FString message;
-						message.Format(Translations::TranslateOrDefault("MapRendererToolbarRendering",
-							"Map Renderer: rendering tile (%d/%d)"), currentTile, totalTileCount);
-						CIsoViewExt::SetStatusBarText(message);
-
-						pIsoView->Draw();
-
-						progress.ProgressBar.SetPos(currentTile);
-						progress.ProgressBar.UpdateWindow();
-
-						MSG msg;
-						if (PeekMessage(&msg, nullptr, 0, 0, PM_REMOVE))
+						saveAsPng = true;
+						const size_t extension = path.find_last_of('.');
+						if (extension != std::string::npos)
+							path = path.substr(0, extension);
+						path += ".png";
+						wpath = STDHelpers::StringToWString(path);
+						Logger::Info("JPEG output exceeds 65535 pixels; automatically switched to PNG: %s\n", path.c_str());
+					}
+					useEncoder = streaming || (saveAsPng && exceedsWicDimension);
+					const char* backend = !useEncoder ? "GDI+ in-memory bitmap"
+						: (saveAsPng ? "built-in PNG" : "WIC streaming JPEG");
+					Logger::Info("Map export %dx%d, %s bytes, %s: %s\n", outputW, outputH,
+						std::to_string(imageBytes).c_str(), backend, path.c_str());
+					failureStage = "Create output file";
+					exportStatus = output.Create(wpath);
+					result = Gdiplus::GenericError;
+					if (FAILED(exportStatus)) break;
+					if (useEncoder)
+					{
+						// PNG never uses the WIC encoder: the built-in one has no
+						// 65535 per-side limit. Only large JPEG still goes to WIC.
+						if (saveAsPng)
 						{
-							TranslateMessage(&msg);
-							DispatchMessage(&msg);
+							failureStage = "Initialize built-in PNG encoder";
+							exportStatus = output.InitializePng(outputW, outputH);
 						}
-						Sleep(1);
-
-						if (CIsoViewExt::RenderTileSuccess || renderFailedCount >= 500) {
-							pIsoView->ViewPosition.x += tileW;
-							currentTile++;
+						else
+						{
+							failureStage = "Initialize streaming JPEG encoder";
+							exportStatus = output.InitializeJpeg(outputW, outputH);
 						}
-						else {
-							renderFailedCount++;
-						}
+						if (FAILED(exportStatus)) break;
 					}
-					pIsoView->ViewPosition.y += tileH;
-				}
-
-				EnableScrollBar(pIsoView->GetSafeHwnd(), SB_BOTH, ESB_ENABLE_BOTH);
-
-				FString message;
-				message.Format(Translations::TranslateOrDefault("MapRendererToolbarSaving",
-					"Map Renderer: saving png file to %s"), path);
-				CIsoViewExt::SetStatusBarText(message);
-
-				CLSID clsidEncoder;
-				UINT num = 0, size = 0;
-				GetImageEncodersSize(&num, &size);
-				ImageCodecInfo* pImageCodecInfo = (ImageCodecInfo*)malloc(size);
-				GetImageEncoders(num, size, pImageCodecInfo);
-				for (UINT i = 0; i < num; ++i)
-				{
-					if (wcscmp(pImageCodecInfo[i].MimeType, 
-						CIsoViewExt::RenderSaveAsPNG ? L"image/png" : L"image/jpeg") == 0)
+					const int bandHeight = streaming ? static_cast<int>((std::min)(uint64_t(2048),
+						(std::max)(uint64_t(1), (uint64_t(64) << 20) / stride))) : outputH;
+					CRect r, cr;
+					pIsoView->GetWindowRect(&r);
+					pIsoView->AdaptRectForSecondScreen(&r);
+					pIsoView->GetClientRect(&cr);
+					int tileW = cr.Width(), tileH = cr.Height();
+					if (tileW <= 0 || tileH <= 0) { tileW = r.Width(); tileH = r.Height(); }
+					result = Gdiplus::InvalidParameter;
+					failureStage = "Render viewport dimensions";
+					if (tileW <= 0 || tileH <= 0) break;
+					auto gridStep = [](int tile, int quantum)
 					{
-						clsidEncoder = pImageCodecInfo[i].Clsid;
-						break;
+						int step = ((tile - 1) / quantum) * quantum;
+						return step > 0 ? step : tile;
+					};
+					const int stepX = gridStep(tileW, 60), stepY = gridStep(tileH, 30);
+					CRect validRange;
+					validRange.left = 30 * (height + width + startY - startX) - r.Width() / 2 - r.left;
+					validRange.top = 15 * (startY + startX) - r.Height() / 2 - r.top;
+					validRange.right = 30 * (height + width + endY - endX) - r.Width() / 2 - r.left;
+					validRange.bottom = 15 * (endY + endX) - r.Height() / 2 - r.top;
+					const int64_t columns = (int64_t(validRange.right) + tileW - validRange.left + stepX - 1) / stepX;
+					const int64_t rows = (int64_t(validRange.bottom) + tileH - validRange.top + stepY - 1) / stepY;
+					const int64_t totalTiles = columns * rows;
+					if (columns <= 0 || rows <= 0) break;
+					CUpdateProgress progress(Translations::TranslateOrDefault("MapRendererProgressText",
+						"Rendering, please wait..."), NULL);
+					progress.ShowWindow(SW_SHOW);
+					progress.UpdateWindow();
+					progress.ProgressBar.SetRange(0, 1000);
+					EnableScrollBar(pIsoView->GetSafeHwnd(), SB_BOTH, ESB_DISABLE_BOTH);
+					result = Gdiplus::Ok;
+					for (int bandY = 0; bandY < outputH && result == Gdiplus::Ok; )
+					{
+						const int currentH = (std::min)(bandHeight, outputH - bandY);
+						failureStage = "Bitmap allocation";
+						if (!bitmap || bitmap->GetHeight() != static_cast<UINT>(currentH))
+						{
+							CIsoViewExt::pFullBitmap = nullptr;
+							bitmap.reset();
+							bitmap.reset(new Bitmap(outputW, currentH, PixelFormat24bppRGB));
+						}
+						CIsoViewExt::pFullBitmap = bitmap.get();
+						CIsoViewExt::RenderBitmapOffsetY = bandY;
+						result = bitmap->GetLastStatus();
+						if (result != Gdiplus::Ok) break;
+						failureStage = "Initialize bitmap";
+						{
+							Graphics g(bitmap.get());
+							result = g.GetLastStatus();
+							if (result == Gdiplus::Ok) result = g.Clear(Color(0, 0, 0, 0));
+						}
+						if (result != Gdiplus::Ok) break;
+						failureStage = "Render tile";
+						for (int64_t row = 0; row < rows && result == Gdiplus::Ok; ++row)
+						{
+							const int viewY = static_cast<int>(validRange.top + row * stepY);
+							const int tileY = r.top + viewY - startPointY + (CIsoViewExt::RenderFullMap ? 0 : 15);
+							if (streaming && (tileY >= bandY + currentH || int64_t(tileY) + tileH <= bandY)) continue;
+							pIsoView->ViewPosition.y = viewY;
+							for (int64_t column = 0; column < columns; ++column)
+							{
+								pIsoView->ViewPosition.x = static_cast<int>(validRange.left + column * stepX);
+								::SetScrollPos(pIsoView->GetSafeHwnd(), SB_VERT, viewY / 30 - width / 2 + 4, TRUE);
+								::SetScrollPos(pIsoView->GetSafeHwnd(), SB_HORZ, pIsoView->ViewPosition.x / 60 - height / 2 + 1, TRUE);
+								bool tileSuccess = false;
+								for (int attempt = 0; attempt < 32 && !tileSuccess; ++attempt)
+								{
+									CIsoViewExt::RenderTileSuccess = false;
+									pIsoView->Draw();
+									tileSuccess = CIsoViewExt::RenderTileSuccess;
+									if (!tileSuccess) Sleep(1);
+								}
+								if (!tileSuccess)
+								{
+									Logger::Error("Map export tile failed at (%d,%d), band %d\n", pIsoView->ViewPosition.x, viewY, bandY);
+									result = Gdiplus::GenericError;
+									break;
+								}
+								const int64_t completed = row * columns + column + 1;
+								const int progressValue = streaming ? static_cast<int>(int64_t(bandY) * 1000 / outputH)
+									: static_cast<int>(completed * 1000 / totalTiles);
+								progress.ProgressBar.SetPos(progressValue);
+								progress.ProgressBar.UpdateWindow();
+								MSG msg;
+								if (PeekMessage(&msg, nullptr, WM_PAINT, WM_PAINT, PM_REMOVE)) DispatchMessage(&msg);
+							}
+						}
+						if (result != Gdiplus::Ok) break;
+						if (useEncoder)
+						{
+							failureStage = "Encode image rows";
+							exportStatus = output.Write(*bitmap);
+							if (FAILED(exportStatus))
+							{
+								Logger::Error("Map export encoder write failed: %s\n", output.PngError());
+								result = Gdiplus::GenericError;
+								break;
+							}
+						}
+						bandY += currentH;
 					}
-				}
-				free(pImageCodecInfo);
-
-				ULONG quality = 80;
-				EncoderParameters encoderParams{};
-				encoderParams.Count = 1;
-				encoderParams.Parameter[0].Guid = EncoderQuality;
-				encoderParams.Parameter[0].Type = EncoderParameterValueTypeLong;
-				encoderParams.Parameter[0].NumberOfValues = 1;
-				encoderParams.Parameter[0].Value = &quality;
-
-				result = CIsoViewExt::pFullBitmap->Save(wpath.c_str(), &clsidEncoder, 
-					CIsoViewExt::RenderSaveAsPNG ? nullptr : &encoderParams);
-				delete CIsoViewExt::pFullBitmap;
-				CIsoViewExt::pFullBitmap = nullptr;
+					if (result != Gdiplus::Ok) break;
+					failureStage = "Save image";
+					if (useEncoder)
+					{
+						exportStatus = output.Finish();
+						if (FAILED(exportStatus))
+						{
+							Logger::Error("Map export encoder commit failed: %s\n", output.PngError());
+							result = Gdiplus::GenericError;
+							break;
+						}
+					}
+					else
+					{
+						CLSID clsidEncoder{};
+						UINT num = 0, size = 0;
+						result = GetImageEncodersSize(&num, &size);
+						if (result != Gdiplus::Ok) break;
+						if (!num || !size) { result = Gdiplus::UnknownImageFormat; break; }
+						std::vector<BYTE> codecs(size);
+						auto info = reinterpret_cast<ImageCodecInfo*>(codecs.data());
+						result = GetImageEncoders(num, size, info);
+						if (result != Gdiplus::Ok) break;
+						bool found = false;
+						for (UINT i = 0; i < num; ++i)
+							if (wcscmp(info[i].MimeType, saveAsPng ? L"image/png" : L"image/jpeg") == 0)
+							{ clsidEncoder = info[i].Clsid; found = true; break; }
+						if (!found) { result = Gdiplus::UnknownImageFormat; break; }
+						ULONG quality = 80;
+						EncoderParameters params{};
+						params.Count = 1;
+						params.Parameter[0].Guid = EncoderQuality;
+						params.Parameter[0].Type = EncoderParameterValueTypeLong;
+						params.Parameter[0].NumberOfValues = 1;
+						params.Parameter[0].Value = &quality;
+						result = bitmap->Save(output.Path(), &clsidEncoder, saveAsPng ? nullptr : &params);
+						if (result != Gdiplus::Ok) break;
+					}
+					failureStage = "Publish output file";
+					exportStatus = output.Publish();
+					if (FAILED(exportStatus)) result = Gdiplus::GenericError;
+				} while (false);
+			}
+			catch (const std::bad_alloc&) { result = Gdiplus::OutOfMemory; }
+			catch (...) { result = Gdiplus::GenericError; }
+			CIsoViewExt::pFullBitmap = nullptr;
+			CIsoViewExt::RenderBitmapOffsetY = 0;
+			CIsoViewExt::RenderStagingTexture.Reset();
+			bitmap.reset();
+			output.Close();
+			CIsoViewExt::RenderingMap = false;
+			pIsoView->ViewPosition = oldViewPos;
+			if (CIsoViewExt::RenderLighing != Current) setLighting(currentlighting);
+			CIsoViewExt::MapRendererIgnoreObjects = std::move(oldIgnoreObjects);
+			EnableScrollBar(pIsoView->GetSafeHwnd(), SB_VERT, oldVerticalScroll);
+			EnableScrollBar(pIsoView->GetSafeHwnd(), SB_HORZ, oldHorizontalScroll);
+			::SetScrollPos(pIsoView->GetSafeHwnd(), SB_VERT, oldViewPos.y / 30 - width / 2 + 4, TRUE);
+			::SetScrollPos(pIsoView->GetSafeHwnd(), SB_HORZ, oldViewPos.x / 60 - height / 2 + 1, TRUE);
+			if (result != Gdiplus::Ok)
+			{
+				++failedMaps;
+				Logger::Error("Map export failed: %s, %dx%d, GDI+ %d, HRESULT 0x%08X, %s\n",
+					failureStage.c_str(), outputW, outputH, int(result), static_cast<int>(static_cast<uint32_t>(exportStatus)), path.c_str());
+				FString message = Translations::TranslateOrDefault(result == Gdiplus::OutOfMemory ? "AllocFullMapBitmapFailed" : "MapRendererFailed",
+					result == Gdiplus::OutOfMemory ? "Memory allocation failed, cannot render full map." : "Map export failed.");
+				FString detail;
+				detail.Format("\n%s\n%s (%dx%d)\nGDI+: %d; HRESULT: 0x%08X", path.c_str(), failureStage.c_str(), outputW, outputH,
+					int(result), static_cast<int>(static_cast<uint32_t>(exportStatus)));
+				message += detail;
+				if (!batchProcess)
+					::MessageBox(pIsoView->m_hWnd, message, Translations::TranslateOrDefault("Error", "Error"), MB_ICONWARNING);
+				else if (failedMaps <= 10) { failedMapDetails += message; failedMapDetails += "\n\n"; }
 			}
 			CIsoViewExt::RenderingMap = false;
 
@@ -1282,6 +1416,14 @@ BOOL CFinalSunDlgExt::OnCommandExt(WPARAM wParam, LPARAM lParam)
 				}
 			}
 
+			if (batchProcess && failedMaps)
+			{
+				FString summary;
+				summary.Format(Translations::TranslateOrDefault("MapRendererBatchFailed", "%d map export(s) failed. See log for details."), failedMaps);
+				summary += "\n\n";
+				summary += failedMapDetails;
+				::MessageBox(CIsoViewExt::GetExtension()->m_hWnd, summary, Translations::TranslateOrDefault("Error", "Error"), MB_ICONWARNING);
+			}
 			CIsoViewExt::ScaledFactor = tempScaledFactor;
 			if (ExtConfigs::DirectXRendering)
 			{
@@ -2144,6 +2286,19 @@ BOOL CFinalSunDlgExt::PreTranslateMessageExt(MSG* pMsg)
 	}
 	switch (pMsg->message)
 	{
+	case WM_TIMER:
+	{
+		// Animation preview: frames are advanced by a timer on the main dialog
+		// (the timer is created in AnimPreview::Play).
+		if (AnimPreview::IsTimerMessage(pMsg->wParam))
+		{
+			AnimPreview::OnTimer();
+			// Return TRUE so the message is not dispatched: the game's own
+			// OnTimer must not receive this unknown timer id.
+			return TRUE;
+		}
+		break;
+	}
 	//case WM_INITDIALOG:
 	//	;
 	//  SetWindowTheme(*this, L"DarkMode_Explorer", NULL);
@@ -2162,6 +2317,12 @@ BOOL CFinalSunDlgExt::PreTranslateMessageExt(MSG* pMsg)
 		}
 		if (CIsoView::CurrentCommand->Command == 0x1E)
 		{
+			if (pMsg->wParam == 'A')
+			{
+				CViewObjectsExt::AutoConnect_Cancel();
+				CViewObjectsExt::PlaceConnectedTile_AutoConnect = !CViewObjectsExt::PlaceConnectedTile_AutoConnect;
+				return TRUE;
+			}
 			for (int i = 0; i < 10; ++i)
 			{
 				if (pMsg->wParam == i + '0' || pMsg->wParam == i + VK_NUMPAD0)
@@ -2171,6 +2332,8 @@ BOOL CFinalSunDlgExt::PreTranslateMessageExt(MSG* pMsg)
 					auto& tileSet = CViewObjectsExt::ConnectedTileSets[info.Index];
 					if (tileSet.ToSetPress[i] > -1)
 					{
+						// switching the connected tile set discards a pending preview
+						CViewObjectsExt::AutoConnect_Cancel();
 						for (auto& [ctIndex2, info2] : CViewObjectsExt::TreeView_ConnectedTileMap)
 						{
 							if (info2.Index == tileSet.ToSetPress[i] && info2.Front == info.Front)
@@ -2212,6 +2375,42 @@ BOOL CFinalSunDlgExt::PreTranslateMessageExt(MSG* pMsg)
 				int index = std::clamp(pBrushSize->GetCurSel() + (zDelta > 0 ? -1 : 1), 0, pBrushSize->GetCount() - 1);
 				pBrushSize->SetCurSel(index);
 				ChangeBrushSize(index);
+			}
+		}
+		else if (CIsoView::CurrentCommand->Command == 1)
+		{
+			int facingIndex = -1;
+			switch (CIsoView::CurrentCommand->Type)
+			{
+			case 1: facingIndex = 2; break; // Infantry
+			case 2: facingIndex = 1; break; // Building
+			case 3: facingIndex = 0; break; // Aircraft
+			case 4: facingIndex = 3; break; // Vehicle
+			}
+
+			if (facingIndex >= 0
+				&& !(CIsoView::CurrentCommand->Command == 1 && CIsoView::CurrentCommand->Type == 7)
+				&& !CIsoView::GetInstance()->Drag
+				&& CIsoView::CurrentCommand->Command != 21)
+			{
+				POINT pt;
+				GetCursorPos(&pt);
+				if (ExtraWindow::IsPointOnIsoViewAndNotCovered(pt))
+				{
+					int zDelta = GET_WHEEL_DELTA_WPARAM(pMsg->wParam);
+					// infantry always stays at 8 directions (step 32), others follow ExtFacings
+					const int step = (facingIndex == 2) ? 32 : (ExtConfigs::ExtFacings_Scroll ? 8 : 32);
+					const int count = 256 / step;
+					// snap the stored value onto the current preset grid, then step one preset
+					int idx = (CIsoViewExt::AutoPropertyBrushFacing[facingIndex] + step / 2) / step;
+					idx %= count;
+					idx = (idx + (zDelta < 0 ? 1 : -1)) % count;
+					if (idx < 0)
+						idx += count;
+					CIsoViewExt::AutoPropertyBrushFacing[facingIndex] = idx * step;
+					::ScreenToClient(CIsoView::GetInstance()->GetSafeHwnd(), &pt);
+					CIsoView::GetInstance()->OnMouseMove(0, pt);
+				}
 			}
 		}
 		// last one

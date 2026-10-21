@@ -21,6 +21,7 @@
 #include <bit>
 #include "Helpers/Translations.h"
 #include "Miscs/DialogStyle.h"
+#include "Miscs/Hooks.INI.h"
 #include "Helpers/TheaterHelpers.h"
 
 #define ENABLE_VISUAL_STYLE
@@ -100,7 +101,9 @@ bool ExtConfigs::ExtWaypoints;
 bool ExtConfigs::ExtFacings;
 bool ExtConfigs::ExtTilts;
 bool ExtConfigs::ExtFacings_Drag;
+bool ExtConfigs::ExtFacings_Scroll;
 bool ExtConfigs::ExtFacings_DragPreview;
+int ExtConfigs::SHPVehicle_FacingOffset = 1;
 int ExtConfigs::UndoRedoLimit;
 bool ExtConfigs::UndoRedo_ShiftPlaceTile;
 bool ExtConfigs::UndoRedo_RecordObjects;
@@ -121,6 +124,7 @@ bool ExtConfigs::SaveMap_FileEncodingComment;
 bool ExtConfigs::DisableLuaConsoleSafetyCheck;
 bool ExtConfigs::VerticalLayout;
 bool ExtConfigs::TileSetBrowserFloating;
+bool ExtConfigs::TileSetBrowserMultiLineTabs;
 bool ExtConfigs::ViewObjectsFloating;
 int ExtConfigs::RecentFileLimit;
 int ExtConfigs::MultiSelectionColor;
@@ -224,6 +228,7 @@ bool ExtConfigs::PreciseDepthCalculation;
 bool ExtConfigs::DisableDirectoryCheck;
 bool ExtConfigs::ExtOverlays;
 bool ExtConfigs::SaveMap_PreserveINISorting;
+bool ExtConfigs::SaveMap_AdaptiveSorting;
 bool ExtConfigs::ExtMixLoader;
 int ExtConfigs::DisplayTextSize;
 int ExtConfigs::DistanceRuler_Records;
@@ -244,6 +249,7 @@ bool ExtConfigs::GridObjectViewer_LoadForceSides;
 bool ExtConfigs::GridObjectViewer_LoadObjectBrowserCategory;
 bool ExtConfigs::HiDPIAwareness;
 bool ExtConfigs::HiDPIAwareness_ScaleIsoView;
+bool ExtConfigs::DisplayRealHPinTechnoDlg;
 
 CInfantryData ExtConfigs::DefaultInfantryProperty;
 CUnitData ExtConfigs::DefaultUnitProperty;
@@ -258,10 +264,10 @@ float ExtConfigs::IsoViewHeightPercentage = 0.5f;
 
 std::vector<ExtConfigs::DynamicOptions> ExtConfigs::Options;
 
-MultimapHelper Variables::RulesMap = {&CINI::Rules(), &CINI::CurrentDocument()};
+MultimapHelper Variables::RulesMap = {&CINI::Rules(), &CINIExt::CurrentDocument()};
 MultimapHelper Variables::Rules = {&CINI::Rules()};
 MultimapHelper Variables::FAData = {&CINI::FAData()};
-MultimapHelper Variables::Rules_FAData = {&CINI::Rules(), &CINI::CurrentDocument(), &CINI::FAData()};
+MultimapHelper Variables::Rules_FAData = {&CINI::Rules(), &CINIExt::CurrentDocument(), &CINI::FAData()};
 
 void FA2sp::ExtConfigsInitialize()
 {
@@ -368,7 +374,9 @@ void FA2sp::ExtConfigsInitialize()
 	ExtConfigs::ExtFacings = CINI::FAData->GetBool("ExtConfigs", "ExtFacings");
 	ExtConfigs::ExtTilts = CINI::FAData->GetBool("ExtConfigs", "ExtTilts");
 	ExtConfigs::ExtFacings_Drag = CINI::FAData->GetBool("ExtConfigs", "ExtFacings.Drag");
+	ExtConfigs::ExtFacings_Scroll = CINI::FAData->GetBool("ExtConfigs", "ExtFacings.Scroll");
 	ExtConfigs::ExtFacings_DragPreview = CINI::FAData->GetBool("ExtConfigs", "ExtFacings.DragPreview", true);
+	ExtConfigs::SHPVehicle_FacingOffset = CINI::FAData->GetInteger("ExtConfigs", "SHPVehicle.FacingOffset", 1);
 	ExtConfigs::ExtVariables = CINI::FAData->GetBool("ExtConfigs", "ExtVariables");
 	ExtConfigs::AIRepairDefaultYes = CINI::FAData->GetBool("ExtConfigs", "AIRepairDefaultYes");
 	ExtConfigs::AISellableDefaultYes = CINI::FAData->GetBool("ExtConfigs", "AISellableDefaultYes");
@@ -412,6 +420,7 @@ void FA2sp::ExtConfigsInitialize()
 	ExtConfigs::FlatToGroundHideExtra = CINI::FAData->GetBool("ExtConfigs", "FlatToGroundHideExtra");
 	ExtConfigs::ExtOverlays = CINI::FAData->GetBool("ExtConfigs", "ExtOverlays");
 	ExtConfigs::LoadObjectsOnInit = CINI::FAData->GetBool("ExtConfigs", "LoadObjectsOnInit");
+	ExtConfigs::DisplayRealHPinTechnoDlg = CINI::FAData->GetBool("ExtConfigs", "DisplayRealHPinTechnoDlg", true);
 
 	ExtConfigs::DistanceRuler_Records = CINI::FAData->GetInteger("ExtConfigs", "DistanceRuler.Records", 5);
 	ExtConfigs::DisplayTextSize = CINI::FAData->GetInteger("ExtConfigs", "DisplayTextSize", 18);
@@ -455,6 +464,8 @@ void FA2sp::ExtConfigsInitialize()
 	ExtConfigs::SaveMap_OnlySaveMAP = CINI::FAData->GetBool("ExtConfigs", "SaveMap.OnlySaveMAP");
 	ExtConfigs::SaveMap_KeepComments = CINI::FAData->GetBool("ExtConfigs", "SaveMap.KeepComments");
 	ExtConfigs::SaveMap_PreserveINISorting = CINI::FAData->GetBool("ExtConfigs", "SaveMap.PreserveINISorting");
+	ExtConfigs::SaveMap_AdaptiveSorting = CINI::FAData->GetBool("ExtConfigs", "SaveMap.AdaptiveSorting");
+
 	// ExtConfigs::SaveMap_MultiPlayOnlySaveYRM = CINI::FAData->GetBool("ExtConfigs", "SaveMap.OnlySaveYRM.MultiPlay");
 	// ExtConfigs::SaveMap_SinglePlayOnlySaveMAP = CINI::FAData->GetBool("ExtConfigs", "SaveMap.OnlySaveMAP.SinglePlay");
 	ExtConfigs::SaveMap_DefaultPreviewOptionMP = CINI::FAData->GetInteger("ExtConfigs", "SaveMap.DefaultPreviewOptionMP", 0);
@@ -462,6 +473,7 @@ void FA2sp::ExtConfigsInitialize()
 
 	ExtConfigs::VerticalLayout = CINI::FAData->GetBool("ExtConfigs", "VerticalLayout");
 	ExtConfigs::TileSetBrowserFloating = CINI::FAData->GetBool("ExtConfigs", "TileSetBrowserFloating");
+	ExtConfigs::TileSetBrowserMultiLineTabs = CINI::FAData->GetBool("ExtConfigs", "TileSetBrowserMultiLineTabs");
 	ExtConfigs::ViewObjectsFloating = CINI::FAData->GetBool("ExtConfigs", "ViewObjectsFloating");
 
 	ExtConfigs::RecentFileLimit = std::clamp(CINI::FAData->GetInteger("ExtConfigs", "RecentFileLimit"), 4, 9);
@@ -586,6 +598,26 @@ void FA2sp::ExtConfigsInitialize()
 	ExtConfigs::DefaultBuildingProperty.AIRepairable = building[15];
 	ExtConfigs::DefaultBuildingProperty.Nominal = building[16];
 
+	// Initialize per-type placement facings on a preset grid (step depends on ExtFacings;
+	// infantry always stays at 8 directions => step 32). Snapping to the nearest preset so
+	// values changed at runtime by the mouse wheel stay valid.
+	{
+		auto SnapFacing = [](const ppmfc::CString& str, int step) -> int
+		{
+			int v = atoi(str);
+			v = ((v + step / 2) / step) * step;
+			v %= 256;
+			if (v < 0)
+				v += 256;
+			return v;
+		};
+		const int step = ExtConfigs::ExtFacings_Scroll ? 8 : 32;
+		CIsoViewExt::AutoPropertyBrushFacing[0] = SnapFacing(ExtConfigs::DefaultAircraftProperty.Facing, step);
+		CIsoViewExt::AutoPropertyBrushFacing[1] = SnapFacing(ExtConfigs::DefaultBuildingProperty.Facing, step);
+		CIsoViewExt::AutoPropertyBrushFacing[2] = SnapFacing(ExtConfigs::DefaultInfantryProperty.Facing, 32);
+		CIsoViewExt::AutoPropertyBrushFacing[3] = SnapFacing(ExtConfigs::DefaultUnitProperty.Facing, step);
+	}
+
 	auto formats = STDHelpers::SplitString(CINI::FAData->GetString("ExtConfigs", "SupportedFormats", "map,mpr,yrm,mmx,yro"));
 	for (auto &f : formats)
 	{
@@ -608,6 +640,10 @@ void FA2sp::ExtConfigsInitialize()
 	{
 		*opt.Value = fa2.GetBool("Options", opt.IniKey, *opt.Value);
 	}
+
+
+	CINIExt::SetKeepSectionSorting(ExtConfigs::SaveMap_PreserveINISorting);
+	CINIExt::SetAdaptiveSorting(ExtConfigs::SaveMap_AdaptiveSorting);
 
 	CTileSetBrowserFrameExt::TileSetBrowserViewScaledFactor = fa2.GetDouble("UserInterface", "TileSetBrowserViewScaledFactor", 1.0);
 	CTileSetBrowserFrameExt::OverlayBrowserViewScaledFactor = fa2.GetDouble("UserInterface", "OverlayBrowserViewScaledFactor", 1.0);
@@ -818,6 +854,12 @@ void ExtConfigs::UpdateOptionTranslations()
 		.Value = &ExtConfigs::DisableLuaConsoleSafetyCheck,
 		.Type = ExtConfigs::SpecialOptionType::None});
 
+	ExtConfigs::Options.push_back(ExtConfigs::DynamicOptions{
+		.DisplayName = Translations::TranslateOrDefault("Options.DisplayRealHPinTechnoDlg", "Display real HP in techno dialogs"),
+		.IniKey = "DisplayRealHPinTechnoDlg",
+		.Value = &ExtConfigs::DisplayRealHPinTechnoDlg,
+		.Type = ExtConfigs::SpecialOptionType::None});
+
 	// Object Browser Settings
 	ExtConfigs::Options.push_back(ExtConfigs::DynamicOptions{
 		.DisplayName = Translations::TranslateOrDefault("Options.ObjectBrowser.SafeHouses", "Block invalid houses"),
@@ -860,6 +902,12 @@ void ExtConfigs::UpdateOptionTranslations()
 		.IniKey = "GridObjectViewer.LoadObjectBrowserCategory",
 		.Value = &ExtConfigs::GridObjectViewer_LoadObjectBrowserCategory,
 		.Type = ExtConfigs::SpecialOptionType::ReloadObjectViewer});
+		
+	ExtConfigs::Options.push_back(ExtConfigs::DynamicOptions{
+		.DisplayName = Translations::TranslateOrDefault("Options.TileSetBrowserMultiLineTabs", "Display tile browser tabs in multiple rows"),
+		.IniKey = "TileSetBrowserMultiLineTabs",
+		.Value = &ExtConfigs::TileSetBrowserMultiLineTabs,
+		.Type = ExtConfigs::SpecialOptionType::Restart});
 
 	// Map Display and Rendering
 	ExtConfigs::Options.push_back(ExtConfigs::DynamicOptions{
@@ -1074,6 +1122,12 @@ void ExtConfigs::UpdateOptionTranslations()
 		.Type = ExtConfigs::SpecialOptionType::ReloadMap});
 
 	ExtConfigs::Options.push_back(ExtConfigs::DynamicOptions{
+		.DisplayName = Translations::TranslateOrDefault("Options.SaveMap.AdaptiveSorting", "Adaptive INI key sorting when saving"),
+		.IniKey = "SaveMap.AdaptiveSorting",
+		.Value = &ExtConfigs::SaveMap_AdaptiveSorting,
+		.Type = ExtConfigs::SpecialOptionType::ReloadMap});
+
+	ExtConfigs::Options.push_back(ExtConfigs::DynamicOptions{
 		.DisplayName = Translations::TranslateOrDefault("Options.FileWatcher", "Enable file watcher"),
 		.IniKey = "FileWatcher",
 		.Value = &ExtConfigs::FileWatcher,
@@ -1265,6 +1319,12 @@ void ExtConfigs::UpdateOptionTranslations()
 		.DisplayName = Translations::TranslateOrDefault("Options.ExtFacings.DragPreview", "Preview facing while draging"),
 		.IniKey = "ExtFacings.DragPreview",
 		.Value = &ExtConfigs::ExtFacings_DragPreview,
+		.Type = ExtConfigs::SpecialOptionType::None});
+
+	ExtConfigs::Options.push_back(ExtConfigs::DynamicOptions{
+		.DisplayName = Translations::TranslateOrDefault("Options.ExtFacings.Scroll", "Allow scroll units into 32 facings when placing"),
+		.IniKey = "ExtFacings.Scroll",
+		.Value = &ExtConfigs::ExtFacings_Scroll,
 		.Type = ExtConfigs::SpecialOptionType::None});
 		
 	ExtConfigs::Options.push_back(ExtConfigs::DynamicOptions{

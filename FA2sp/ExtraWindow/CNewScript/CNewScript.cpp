@@ -1,4 +1,5 @@
 #include "CNewScript.h"
+#include "../../Miscs/Hooks.INI.h"
 #include "../../FA2sp.h"
 #include "../../Helpers/Translations.h"
 #include "../../Helpers/STDHelpers.h"
@@ -20,10 +21,11 @@
 #include <numeric>
 #include "../CTriggerAnnotation/CTriggerAnnotation.h"
 #include "../CNewTeamTypes/CNewTeamTypes.h"
+#include "../CNewLocalVariables/CNewLocalVariables.h"
 
 HWND CNewScript::m_hwnd;
 CFinalSunDlg* CNewScript::m_parent;
-CINI& CNewScript::map = CINI::CurrentDocument;
+CINIExt& CNewScript::map = CINIExt::CurrentDocument;
 CINI& CNewScript::fadata = CINI::FAData;
 MultimapHelper& CNewScript::rules = Variables::RulesMap;
 
@@ -52,12 +54,16 @@ HWND CNewScript::hActionExtraParamDes;
 HWND CNewScript::hInsert;
 HWND CNewScript::hRenderPath;
 HWND CNewScript::hSearchReference;
+HWND CNewScript::hJumpWaypointParam;
+HWND CNewScript::hJumpWaypointExtraParam;
 
 int CNewScript::SelectedScriptIndex = -1;
 FString CNewScript::CurrentScriptID;
 FMap<bool> CNewScript::ActionHasExtraParam;
 FMap<bool> CNewScript::ActionIsStringParam;
 bool CNewScript::ParamAutodrop[2];
+ParamType CNewScript::ActionParamType[2];
+RECT CNewScript::ParamComboRect[2];
 bool CNewScript::bInsert;
 bool CNewScript::AutoChangeName = false;
 WNDPROC CNewScript::OriginalListBoxProc;
@@ -135,6 +141,23 @@ void CNewScript::Initialize(HWND& hWnd)
     hActionType = GetDlgItem(hWnd, Controls::ActionType);
     hActionParam = GetDlgItem(hWnd, Controls::ActionParam);
     hActionExtraParam = GetDlgItem(hWnd, Controls::ActionExtraParam);
+
+    auto GetClientRectOf = [&hWnd](HWND hControl)
+        {
+            RECT rc;
+            GetWindowRect(hControl, &rc);
+            POINT pt = { rc.left, rc.top };
+            ScreenToClient(hWnd, &pt);
+            int w = rc.right - rc.left;
+            int h = rc.bottom - rc.top;
+            rc.left = pt.x;
+            rc.top = pt.y;
+            rc.right = pt.x + w;
+            rc.bottom = pt.y + h;
+            return rc;
+        };
+    ParamComboRect[0] = GetClientRectOf(hActionParam);
+    ParamComboRect[1] = GetClientRectOf(hActionExtraParam);
     hDescription = GetDlgItem(hWnd, Controls::Description);
     hMoveUp = GetDlgItem(hWnd, Controls::MoveUp);
     hMoveDown = GetDlgItem(hWnd, Controls::MoveDown);
@@ -144,6 +167,10 @@ void CNewScript::Initialize(HWND& hWnd)
     hRenderPath = GetDlgItem(hWnd, Controls::RenderPath);
     hSearchReference = GetDlgItem(hWnd, Controls::SearchReference);
     hDragPoint = GetDlgItem(hWnd, Controls::DragPoint);
+    hJumpWaypointParam = GetDlgItem(hWnd, Controls::JumpWaypointParam);
+    hJumpWaypointExtraParam = GetDlgItem(hWnd, Controls::JumpWaypointExtraParam);
+    ShowWindow(hJumpWaypointParam, SW_HIDE);
+    ShowWindow(hJumpWaypointExtraParam, SW_HIDE);
     bInsert = false;
     CIsoViewExt::DrawScriptPath = false;
 
@@ -598,6 +625,12 @@ BOOL CALLBACK CNewScript::DlgProc(HWND hWnd, UINT Msg, WPARAM wParam, LPARAM lPa
         m_transparency.Init(hWnd, "ScriptEditorOpacity");
         return TRUE;
     }
+    case WM_SHOWWINDOW:
+    {
+        if (wParam)
+            UpdateJumpButtons();
+        break;
+    }
     case WM_COMMAND:
     {
         if (m_transparency.HandleMessage(hWnd, Msg, wParam, lParam, "ScriptEditorOpacity"))
@@ -700,6 +733,14 @@ BOOL CALLBACK CNewScript::DlgProc(HWND hWnd, UINT Msg, WPARAM wParam, LPARAM lPa
                 }
             }        
             break;
+        case Controls::JumpWaypointParam:
+            if (CODE == BN_CLICKED)
+                OnClickJumpButton(false);
+            break;
+        case Controls::JumpWaypointExtraParam:
+            if (CODE == BN_CLICKED)
+                OnClickJumpButton(true);
+            break;
         default:
             break;
         }
@@ -762,6 +803,9 @@ void CNewScript::OnSelchangeActionListbox()
         SendMessage(hActionParam, CB_SETCURSEL, -1, NULL);
         SendMessage(hActionExtraParam, CB_SETCURSEL, -1, NULL);
         SendMessage(hDescription, WM_SETTEXT, 0, (LPARAM)"");
+        CNewScript::ActionParamType[0] = ParamType::None;
+        CNewScript::ActionParamType[1] = ParamType::None;
+        CNewScript::UpdateJumpButtons();
         return;
     }
 
@@ -992,6 +1036,9 @@ void CNewScript::OnSelchangeScript(bool edited, int specificIdx)
 		AutoChangeName = true;
 		SendMessage(hName, WM_SETTEXT, 0, (LPARAM)"");
 		AutoChangeName = false;
+        CNewScript::ActionParamType[0] = ParamType::None;
+        CNewScript::ActionParamType[1] = ParamType::None;
+        CNewScript::UpdateJumpButtons();
         while (SendMessage(hActionsListBox, LB_DELETESTRING, 0, NULL) != CB_ERR);
     };
 
@@ -1178,12 +1225,12 @@ void CNewScript::OnClickCloScript(HWND& hWnd)
         auto key = CINI::GetAvailableKey("ScriptTypes");
         auto value = CMapDataExt::GetAvailableIndex(EIndexType::Script);
 
-        CINI::CurrentDocument->WriteString("ScriptTypes", key, value);
+        CINIExt::CurrentDocument->WriteString("ScriptTypes", key, value);
 
-        auto oldname = CINI::CurrentDocument->GetString(CurrentScriptID, "Name", "New script");
+        auto oldname = CINIExt::CurrentDocument->GetString(CurrentScriptID, "Name", "New script");
         FString newName = ExtraWindow::GetCloneName(oldname);
 
-        CINI::CurrentDocument->WriteString(value, "Name", newName);
+        CINIExt::CurrentDocument->WriteString(value, "Name", newName);
         CNewTeamTypes::ScriptListChanged = true;
 
         auto copyitem = [&value](FString key)
@@ -1550,6 +1597,8 @@ void CNewScript::UpdateActionAndParam(int actionChanged, int listBoxCurChanged, 
     key.Format("%d", listBoxCurChanged);
     auto value = map.GetString(CurrentScriptID, key);
     auto atoms = FString::SplitString(value, 1);
+    CNewScript::ActionParamType[0] = ParamType::None;
+    CNewScript::ActionParamType[1] = ParamType::None;
     if (auto pSection = fadata.GetSection(ExtraWindow::GetTranslatedSectionName("ScriptsRA2")))
     {
         FString action;
@@ -1593,20 +1642,22 @@ void CNewScript::UpdateActionAndParam(int actionChanged, int listBoxCurChanged, 
                 {
                     SendMessage(hActionParamDes, WM_SETTEXT, 0, (LPARAM)param[0]);
                     ExtraWindow::LoadParams(vcbActionParam, param[1]); 
-                    if (!ExtConfigs::SearchCombobox_Waypoint && param[1] == "1") // waypoints
+                    CNewScript::ActionParamType[0] = ExtraWindow::GetParamType(param[1]);
+                    if (!ExtConfigs::SearchCombobox_Waypoint && CNewScript::ActionParamType[0] == ParamType::Waypoint) // waypoints
                     {
                         CNewScript::ParamAutodrop[0] = false;
                     }
                 }
                 if (ActionIsStringParam[atoms[0]])
                 {
-                    if (ActionHasExtraParam[name])
+                    if (ActionHasExtraParam[name] && param.size() >= 4)
                     {
                         auto atoms = FString::SplitString(value, 2);
                         EnableWindow(hActionExtraParam, TRUE);
                         SendMessage(hActionExtraParamDes, WM_SETTEXT, 0, (LPARAM)param[2]);
                         ExtraWindow::LoadParams(vcbActionExtraParam, param[3]);
-                        if (!ExtConfigs::SearchCombobox_Waypoint && param[3] == "1") // waypoints
+                        CNewScript::ActionParamType[1] = ExtraWindow::GetParamType(param[3]);
+                        if (!ExtConfigs::SearchCombobox_Waypoint && CNewScript::ActionParamType[1] == ParamType::Waypoint) // waypoints
                         {
                             CNewScript::ParamAutodrop[1] = false;
                         }
@@ -1649,12 +1700,13 @@ void CNewScript::UpdateActionAndParam(int actionChanged, int listBoxCurChanged, 
                 }
                 else
                 {
-                    if (ActionHasExtraParam[name])
+                    if (ActionHasExtraParam[name] && param.size() >= 4)
                     {
                         EnableWindow(hActionExtraParam, TRUE);
                         SendMessage(hActionExtraParamDes, WM_SETTEXT, 0, (LPARAM)param[2]);
                         ExtraWindow::LoadParams(vcbActionExtraParam, param[3]);
-                        if (!ExtConfigs::SearchCombobox_Waypoint && param[3] == "1") // waypoints
+                        CNewScript::ActionParamType[1] = ExtraWindow::GetParamType(param[3]);
+                        if (!ExtConfigs::SearchCombobox_Waypoint && CNewScript::ActionParamType[1] == ParamType::Waypoint) // waypoints
                         {
                             CNewScript::ParamAutodrop[1] = false;
                         }
@@ -1725,13 +1777,15 @@ void CNewScript::UpdateActionAndParam(int actionChanged, int listBoxCurChanged, 
             SendMessage(hActionExtraParamDes, WM_SETTEXT, 0, (LPARAM)buffer);
         }
     }
+
+    UpdateJumpButtons();
 }
 
 void CNewScript::UpdateScriptPath()
 {
     if (!CIsoViewExt::DrawScriptPath
         ||CurrentScriptID.IsEmpty() 
-        || !CINI::CurrentDocument->SectionExists(CurrentScriptID))
+        || !CINIExt::CurrentDocument->SectionExists(CurrentScriptID))
         return;
 
     CIsoViewExt::ScriptPath.clear();
@@ -1740,11 +1794,11 @@ void CNewScript::UpdateScriptPath()
     {
         FString key;
         key.Format("%d", i);
-        auto value = CINI::CurrentDocument->GetString(CurrentScriptID, key);
+        auto value = CINIExt::CurrentDocument->GetString(CurrentScriptID, key);
         auto atoms = FString::SplitString(value);
+        if (atoms.size() < 2) break;
         auto& action = atoms[0];
         auto& actionParam = atoms[1];
-        if (atoms.size() < 2) break;
         if (action == "6")
         {
             i = atoi(actionParam) - 2;
@@ -1775,11 +1829,11 @@ void CNewScript::UpdateScriptPath()
                 if (auto pSectionParam = CINI::FAData->GetSection(ExtraWindow::GetTranslatedSectionName("ScriptParams")))
                 {
                     auto param = FString::SplitString(CINI::FAData->GetString(ExtraWindow::GetTranslatedSectionName("ScriptParams"), paramIdx));
-                    if (ActionHasExtraParam[name])
+                    if (ActionHasExtraParam[name] && param.size() >= 4)
                     {
                         if (param[3] == "1") // waypoints
                         {
-                            auto pos = CINI::CurrentDocument->GetInteger("Waypoints", actionParam);
+                            auto pos = CINIExt::CurrentDocument->GetInteger("Waypoints", actionParam);
                             int x = pos / 1000;
                             int y = pos % 1000;
                             CIsoViewExt::ScriptPath.push_back({ x,y });
@@ -1789,7 +1843,7 @@ void CNewScript::UpdateScriptPath()
                     {
                         if (param[1] == "1") // waypoints
                         {
-                            auto pos = CINI::CurrentDocument->GetInteger("Waypoints", actionParam);
+                            auto pos = CINIExt::CurrentDocument->GetInteger("Waypoints", actionParam);
                             int x = pos / 1000;
                             int y = pos % 1000;
                             CIsoViewExt::ScriptPath.push_back({ x,y });
@@ -1819,6 +1873,206 @@ void CNewScript::OnClickSearchReference(HWND& hWnd)
         ::SendMessage(CSearhReference::GetHandle(), 114514, 0, 0);
     }
 
+}
+
+void CNewScript::UpdateJumpButtons()
+{
+    HWND combos[2] = { hActionParam, hActionExtraParam };
+    HWND btns[2]   = { hJumpWaypointParam, hJumpWaypointExtraParam };
+
+    for (int i = 0; i < 2; ++i)
+    {
+        bool show = CNewScript::ActionParamType[i] != ParamType::None && IsWindowEnabled(combos[i]);
+
+        RECT rcBtn;
+        GetWindowRect(btns[i], &rcBtn);
+        POINT ptBtn = { rcBtn.left, rcBtn.top };
+        ScreenToClient(m_hwnd, &ptBtn);
+
+        const RECT& orig = ParamComboRect[i];
+        int origW = orig.right - orig.left;
+        int gap = (int)(2 * CFinalSunAppExt::ProgramScaleFactor);
+
+        RECT rcCombo;
+        GetWindowRect(combos[i], &rcCombo);
+        int curW = rcCombo.right - rcCombo.left;
+
+        int newW = origW;
+        if (show)
+        {
+            newW = (ptBtn.x - gap) - orig.left;
+            if (newW >= origW || newW <= 0)
+                newW = origW; 
+        }
+
+        if (curW != newW)
+            MoveWindow(combos[i], orig.left, orig.top, newW, orig.bottom - orig.top, TRUE);
+
+        ShowWindow(btns[i], show ? SW_SHOW : SW_HIDE);
+    }
+}
+
+void CNewScript::OnClickJumpButton(bool extra)
+{
+    const int jumpSource = SoundPlayer::ScriptParam;
+    const int jumpIndex = extra ? 1 : 0;
+    auto& vcb = extra ? vcbActionExtraParam : vcbActionParam;
+	FString value = vcb.GetSelectedText(true);
+	auto type = CNewScript::ActionParamType[extra];
+	if (type == ParamType::Waypoint)
+    {
+        FString::TrimIndex(value);
+        if (auto pCord = CINIExt::CurrentDocument->TryGetString("Waypoints", value))
+        {
+            auto second = atoi(*pCord);
+            if (second > 0)
+            {
+                CObjectSearch::MoveToMapCoord(second / 1000, second % 1000);
+            }
+        }
+    }
+    else if (type == ParamType::Team)
+    {
+        if (CNewTeamTypes::GetHandle() == NULL)
+            CNewTeamTypes::Create(m_parent);
+
+        auto atoms = FString::SplitString(value, 1, " - ");
+        auto ID = atoms[1];
+        auto dlg = GetDlgItem(CNewTeamTypes::GetHandle(), CNewTeamTypes::Controls::SelectedTeam);
+        auto idx = SendMessage(dlg, CB_FINDSTRINGEXACT, 0, ExtraWindow::GetTeamDisplayName(ID));
+        if (idx == CB_ERR)
+            return;
+        SendMessage(dlg, CB_SETCURSEL, idx, NULL);
+        CNewTeamTypes::OnSelchangeTeamtypes();
+        SetWindowPos(CNewTeamTypes::GetHandle(), HWND_TOP, 0, 0, 0, 0, SWP_NOMOVE | SWP_NOSIZE | SWP_SHOWWINDOW);
+    }
+    else if (type == ParamType::Script)
+    {
+        if (CNewScript::GetHandle() == NULL)
+            CNewScript::Create(m_parent);
+            
+        auto atoms = FString::SplitString(value, 1, " - ");
+        auto ID = atoms[1];
+        auto dlg = GetDlgItem(CNewScript::GetHandle(), CNewScript::Controls::SelectedScript);
+        auto idx = SendMessage(dlg, CB_FINDSTRINGEXACT, 0, ExtraWindow::GetTeamDisplayName(ID));
+        if (idx == CB_ERR)
+            return;
+        SendMessage(dlg, CB_SETCURSEL, idx, NULL);
+        CNewScript::OnSelchangeScript();
+        SetWindowPos(CNewScript::GetHandle(), HWND_TOP, 0, 0, 0, 0, SWP_NOMOVE | SWP_NOSIZE | SWP_SHOWWINDOW);
+    }
+    else if (type == ParamType::LocalVariable)
+    {
+        if (CNewLocalVariables::GetHandle() == NULL)
+        CNewLocalVariables::Create(m_parent);
+        FString::TrimIndex(value);
+		value += " ";
+		auto idx = CNewLocalVariables::vcbVariables.FindStringExactStart(value);
+        if (idx == CB_ERR)
+            return;
+        CNewLocalVariables::OnSelchangeVariable(false, idx);
+        SetWindowPos(CNewLocalVariables::GetHandle(), HWND_TOP, 0, 0, 0, 0, SWP_NOMOVE | SWP_NOSIZE | SWP_SHOWWINDOW);
+    }
+    else if (type == ParamType::Theme)
+    {
+        auto atoms = FString::SplitString(value, 1, " - ");
+        auto ID = atoms[1];
+        auto soundName = CINI::Theme->GetString(ID, "Sound");
+        if (!soundName.IsEmpty())
+        {
+            soundName += ".wav";
+            if (SoundPlayer::IsPlaying()
+                && SoundPlayer::IsSameJumpTarget(jumpSource, jumpIndex, soundName))
+                SoundPlayer::Stop();
+            else
+            {
+                SoundPlayer::SetJumpTarget(jumpSource, jumpIndex, soundName);
+                SoundPlayer::PlayThemeSoundFile(soundName);
+            }
+        }
+    }
+    else if (type == ParamType::Eva)
+    {
+        auto atoms = FString::SplitString(value, 1, " - ");
+        auto ID = atoms[1];
+		FString EvaSide = "Allied";
+        if (!CMapData::Instance->IsMultiOnly())
+        {
+			auto player = map.GetString("Basic", "Player");
+            auto country = map.GetString(player, "Country");
+            auto side = Variables::RulesMap.GetString(country, "Side");
+            if (side == "Nod")
+                EvaSide = "Russian";
+            else if (side == "ThirdSide")
+                EvaSide = "Yuri";
+			EvaSide = Variables::RulesMap.GetString(side, "EVA.Tag", EvaSide);
+		}
+		auto soundName = CINI::Eva->GetString(ID, EvaSide);
+		if (soundName.IsEmpty())
+        {
+            EvaSide = "Allied";
+            soundName = CINI::Eva->GetString(ID, EvaSide);
+        }
+		if (!soundName.IsEmpty())
+        {
+            soundName += ".wav";
+            if (SoundPlayer::IsPlaying()
+                && SoundPlayer::IsSameJumpTarget(jumpSource, jumpIndex, soundName))
+                SoundPlayer::Stop();
+            else
+            {
+                SoundPlayer::SetJumpTarget(jumpSource, jumpIndex, soundName);
+                SoundPlayer::PlayThemeSoundFile(soundName);
+            }
+        }
+    }
+    else if (type == ParamType::Sound)
+    {
+        auto atoms = FString::SplitString(value, 1, " - ");
+        auto ID = atoms[1];
+        auto soundNames = CINI::Sound->GetString(ID, "Sounds");
+		soundNames.Trim();
+		auto sounds = FString::SplitString(soundNames, " ");
+        if (!sounds.empty())
+        {
+            auto randomSound = STDHelpers::RandomSelect(sounds);
+            randomSound.Trim();
+            if (randomSound[0] == '$')
+            {
+                randomSound = randomSound.Mid(1);
+            }
+            if (SoundPlayer::IsPlaying()
+                && SoundPlayer::IsSameJumpTarget(jumpSource, jumpIndex, randomSound))
+                SoundPlayer::Stop();
+            else
+            {
+                auto volume = CINI::Sound->GetInteger(value, "Volume", 100);
+                SoundPlayer::SetJumpTarget(jumpSource, jumpIndex, randomSound);
+                SoundPlayer::PlayBagSound(randomSound, volume);
+            }
+        }
+    }
+    else if (type == ParamType::Animation)
+    {
+        auto atoms = FString::SplitString(value, 1, " - ");
+        auto ID = atoms[1];
+
+		if (AnimPreview::IsSame(ID))
+		{
+			AnimPreview::Stop();
+		}
+		else
+		{
+            auto pIsoView = CIsoViewExt::GetExtension();
+            CRect window;
+            CIsoViewExt::GetValidWindowRect(pIsoView->GetSafeHwnd(), &window);
+            CIsoViewExt::AdaptRectForSecondScreen(&window);
+            int xCenter = window.left + window.right / 2 + pIsoView->ViewPosition.x;
+            int yCenter = window.top + window.bottom / 2 + pIsoView->ViewPosition.y;
+            pIsoView->ScreenCoord2MapCoord(xCenter, yCenter);
+            AnimPreview::Play(ID, MapCoord{ xCenter, yCenter });
+		}
+    }
 }
 
 bool CNewScript::OnEnterKeyDown(HWND& hWnd)

@@ -17,6 +17,7 @@
 #include <immintrin.h>
 #include <filesystem>
 #include "../CIsoView/RendererTypes.h"
+#include "../CIsoView/Body.h"
 #include "../CIsoView/DirectXCore.h"
 #include "../CFinalSunApp/Body.h"
 
@@ -386,6 +387,7 @@ void CLoadingExt::ClearItemTypes(bool releaseNonsurfaces)
 		Renderer::VehicleTypes.clear();
 		Renderer::AircraftTypes.clear();
 		PalettesManager::Release();
+		AnimPreview::ClearCache();
 
 		if (CIsoViewExt::DirectXReady())
 		{
@@ -508,6 +510,9 @@ void CLoadingExt::ClipAndLoadBuilding(const FString& ID, const FString& ImageID,
 	int width, int height, Palette* palette, unsigned char*& pAlphaBuffer)
 {
 	auto& ret = CLoadingExt::GetBuildingClipImageDataFromMap(ImageID);
+	for (auto& pData : ret)
+		if (pData)
+			pData->ReleaseCachedTextures();
 	ret.clear();
 	int idx = CMapDataExt::GetBuildingTypeIndex(ID);
 	auto& DataExt = CMapDataExt::GetExtension()->BuildingDataExts[idx];
@@ -607,6 +612,9 @@ static FString GetFinalLoopAnim(const FString& image)
 
 void CLoadingExt::LoadBuilding(const FString& ID)
 {
+	if (auto itr = Renderer::BuildingTypes.find(ID); itr != Renderer::BuildingTypes.end())
+		itr->second.InvalidateCachedBundles();
+
 	if (IsLoadingObjectView)
 	{
 		LoadBuilding_Normal(ID);
@@ -650,6 +658,10 @@ void CLoadingExt::LoadBuilding_Normal(const FString& ID, bool loadAsGarrisonDama
 	}
 	GetFullPaletteName(PaletteName);
 	auto palette = PalettesManager::LoadPalette(PaletteName);
+	if (!palette)
+	{
+		palette = Palette::PALETTE_UNIT;
+	}
 	auto mainPalette = palette;
 
 	auto loadBuildingFrameShape = [&](FString name, int nFrame = 0, int deltaX = 0, int deltaY = 0, bool shadow = false) -> bool
@@ -1163,6 +1175,10 @@ void CLoadingExt::LoadBuilding_Damaged(const FString& ID, bool loadAsRubble)
 	}
 	GetFullPaletteName(PaletteName);
 	auto palette = PalettesManager::LoadPalette(PaletteName);
+	if (!palette)
+	{
+		palette = Palette::PALETTE_UNIT;
+	}
 	auto mainPalette = palette;
 
 	auto loadBuildingFrameShape = [&](FString name, int nFrame = 0, int deltaX = 0, int deltaY = 0, bool shadow = false) -> bool
@@ -2575,7 +2591,8 @@ void CLoadingExt::LoadVehicleOrAircraft(const FString& ID, int tiltType)
 			}
 		}
 
-		std::rotate(framesToRead.begin(), framesToRead.begin() + 1 * targetFacings / 8, framesToRead.end());
+		int offset = ExtConfigs::SHPVehicle_FacingOffset;
+		std::rotate(framesToRead.begin(), framesToRead.begin() + offset * targetFacings / 8, framesToRead.end());
 
 		FString FileName = ImageID + ".shp";
 		FString FileNameTurret = ImageID + "tur.shp";
@@ -2632,7 +2649,7 @@ void CLoadingExt::LoadVehicleOrAircraft(const FString& ID, int tiltType)
 
 						// turret start from 0 + WalkFrames * Facings, ignore StartWalkFrame
 						// and always has 32 facings
-						turrentFacing = (((targetFacings / 8 + i) % targetFacings) * 32 / targetFacings) % 32;
+						turrentFacing = (((offset * targetFacings / 8 + i) % targetFacings) * 32 / targetFacings) % 32;
 						turretFrameToRead = bUseTurrentFile ? turrentFacing : (facingCount * nWalkFrames + turrentFacing);
 						if (KratosWeaponTurretFrameIndex >= 0)
 						{
@@ -2681,7 +2698,7 @@ void CLoadingExt::LoadVehicleOrAircraft(const FString& ID, int tiltType)
 					int nWalkFrames = CINI::Art->GetInteger(ArtID, "WalkFrames", 1);
 					int turrentFacing;
 
-					turrentFacing = (((targetFacings / 8 + i) % targetFacings) * 32 / targetFacings) % 32;
+					turrentFacing = (((offset * targetFacings / 8 + i) % targetFacings) * 32 / targetFacings) % 32;
 
 					bool barrelInFront = IsBarrelInFront(i, targetFacings);
 					if (hasVoxelBarl)
@@ -2823,6 +2840,9 @@ ImageDataClassSafe* CLoadingExt::SetBuildingImageDataSafe(unsigned char* pBuffer
 
 void CLoadingExt::SetImageDataSafe(unsigned char* pBuffer, ImageDataClassSafe* pData, int FullWidth, int FullHeight, Palette* pPal)
 {
+	if (pData->pImageBuffer)
+		pData->ReleaseCachedTextures();
+
 	if (pData->pImageBuffer)
 		pData->pImageBuffer = nullptr;
 	if (pData->pPixelValidRanges)
@@ -3944,6 +3964,14 @@ int CLoadingExt::HasFileMix(FString filename, int nMix)
 	filepath += "Resources\\HighPriority\\";
 	filepath += filename;
 	fin.open(filepath, std::ios::in | std::ios::binary);
+
+	if (!fin.is_open())
+	{
+		// [ExtraDirectories] lower than HighPriority, higher than FilePath()
+		if (CLoadingExt::FindInExtraDirectories(filename.c_str(), &filepath))
+			fin.open(filepath, std::ios::in | std::ios::binary);
+	}
+
 	if (!fin.is_open())
 	{
 		filepath = CFinalSunApp::FilePath();
@@ -4098,10 +4126,14 @@ Palette* CLoadingExt::CreateBalancedPalette(const Palette* palA, const Palette* 
 	Palette* result = GameCreate<Palette>();
 	PalettesManager::CalculatedMixedPalettes.push_back(result);
 
+	std::memset(result, 0, sizeof(Palette));
 	result->Data[0] = BGRStruct(0, 0, 0);
 
-	for (int i = 16; i < 32; ++i) {
-		result->Data[i] = palA->Data[i];
+	const Palette* houseColorSource = palA ? palA : palB;
+	if (houseColorSource) {
+		for (int i = 16; i < 32; ++i) {
+			result->Data[i] = houseColorSource->Data[i];
+		}
 	}
 
 	struct ColorNode {
@@ -4114,6 +4146,8 @@ Palette* CLoadingExt::CreateBalancedPalette(const Palette* palA, const Palette* 
 	colors.reserve(512);
 
 	auto add_palette = [&](const Palette* pal) {
+		if (!pal) return;
+
 		for (int i = 1; i < 256; ++i) {
 			if (i >= 16 && i < 32) continue;
 
@@ -5403,7 +5437,7 @@ TextureResource* CLoadingExt::DirectXGetOrLoadFlagOrCelltagFromMap(COLORREF newC
 	return itr->second;
 }
 
-void* CLoadingExt::ReadWholeFile(const char* filename, DWORD* pDwSize, bool fa2path)
+void* CLoadingExt::ReadWholeFile(const char* filename, DWORD* pDwSize, bool fa2path, bool useCache)
 {
 #ifndef NDEBUG
 	Logger::Debug("Requesting file [%s] in %s... ", filename, fa2path ? "FA2 path" : "Game path");	
@@ -5425,28 +5459,31 @@ void* CLoadingExt::ReadWholeFile(const char* filename, DWORD* pDwSize, bool fa2p
 			basename = p + 1;
 	}
 
-	auto it = g_cache[fa2path].find(basename);
-	if (it != g_cache[fa2path].end())
+	if (useCache)
 	{
-		uint64_t lastUsed = g_cacheTime[fa2path][basename];
-		const auto& src = it->second;
-		auto pBuffer = GameCreateArray<unsigned char>(src.size());
-		memcpy(pBuffer, src.data(), src.size());
-		if (pDwSize)
-			*pDwSize = (DWORD)src.size();
-
-		g_cacheTime[fa2path][basename] = nowMs;
-
-		if (nowMs - lastUsed > CACHE_TTL_MS)
+		auto it = g_cache[fa2path].find(basename);
+		if (it != g_cache[fa2path].end())
 		{
-			g_cache[fa2path].erase(it);
-			g_cacheTime[fa2path].erase(basename);
-		}
+			uint64_t lastUsed = g_cacheTime[fa2path][basename];
+			const auto& src = it->second;
+			auto pBuffer = GameCreateArray<unsigned char>(src.size());
+			memcpy(pBuffer, src.data(), src.size());
+			if (pDwSize)
+				*pDwSize = (DWORD)src.size();
 
-#ifndef NDEBUG
-		Logger::Raw("Loaded from CACHE. Done, dwSize = [%d].\n", src.size());
-#endif
-		return pBuffer;
+			g_cacheTime[fa2path][basename] = nowMs;
+
+			if (nowMs - lastUsed > CACHE_TTL_MS)
+			{
+				g_cache[fa2path].erase(it);
+				g_cacheTime[fa2path].erase(basename);
+			}
+
+	#ifndef NDEBUG
+			Logger::Raw("Loaded from CACHE. Done, dwSize = [%d].\n", src.size());
+	#endif
+			return pBuffer;
+		}
 	}
 
 	FString filepath;
@@ -5486,6 +5523,19 @@ void* CLoadingExt::ReadWholeFile(const char* filename, DWORD* pDwSize, bool fa2p
 		filepath += "Resources\\HighPriority\\";
 		filepath += filename;
 		loadedData = readFile(filepath.c_str());
+
+		if (loadedData.empty())
+		{
+			// [ExtraDirectories] lower than HighPriority, higher than FilePath()
+			for (const auto& dir : CLoadingExt::GetExtraDirectories())
+			{
+				filepath = dir;
+				filepath += filename;
+				loadedData = readFile(filepath.c_str());
+				if (!loadedData.empty())
+					break;
+			}
+		}
 
 		if (loadedData.empty())
 		{
@@ -5548,10 +5598,13 @@ void* CLoadingExt::ReadWholeFile(const char* filename, DWORD* pDwSize, bool fa2p
 		return nullptr;
 	}
 
-	g_cache[fa2path][basename] = loadedData;
-	g_cacheTime[fa2path][basename] = nowMs;
+	if (useCache)
+	{
+		g_cache[fa2path][basename] = loadedData;
+		g_cacheTime[fa2path][basename] = nowMs;
+	}
 
-	if (nowMs - g_lastCleanup > CLEANUP_INTERVAL_MS)
+	if (useCache && nowMs - g_lastCleanup > CLEANUP_INTERVAL_MS)
 	{
 		for (auto it2 = g_cacheTime[fa2path].begin(); it2 != g_cacheTime[fa2path].end();)
 		{
@@ -5596,6 +5649,14 @@ bool CLoadingExt::HasFileExt(ppmfc::CString filename, int nMix)
 	filepath += "Resources\\HighPriority\\";
 	filepath += filename;
 	fin.open(filepath, std::ios::in | std::ios::binary);
+
+	if (!fin.is_open())
+	{
+		// [ExtraDirectories] lower than HighPriority, higher than FilePath()
+		if (CLoadingExt::FindInExtraDirectories(filename.GetString(), &filepath))
+			fin.open(filepath, std::ios::in | std::ios::binary);
+	}
+
 	if (!fin.is_open())
 	{
 		filepath = CFinalSunApp::FilePath();
@@ -5782,4 +5843,20 @@ std::vector<ImageDataClassSafe::BuildingTextureSlice> ImageDataClassSafe::GetBui
 
 	auto& ret = m_buildingSliceCache[color] = std::move(entry);
 	return ret.slices;
+}
+
+void ImageDataClassSafe::ReleaseCachedTextures()
+{
+	if (CIsoViewExt::DirectXReady() && CIsoViewExt::g_pDX)
+	{
+		CIsoViewExt::g_pDX->RemoveTexturesFor(this);
+
+		for (auto& cacheEntry : m_buildingSliceCache)
+			for (auto& pKey : cacheEntry.second.sliceKeys)
+				if (pKey)
+					CIsoViewExt::g_pDX->RemoveTexturesFor(pKey.get());
+	}
+
+	m_buildingSliceCache.clear();
+	m_opacityExtractBuffer.reset();
 }

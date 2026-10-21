@@ -11,6 +11,8 @@
 #include <set>
 #include <ddraw.h>
 #include <gdiplus.h>
+#include <d3d11.h>
+#include <wrl/client.h>
 
 #pragma comment(lib, "gdiplus.lib")
 #pragma comment(lib, "ddraw.lib")
@@ -33,6 +35,7 @@ namespace Renderer
 }
 
 enum class PathfindingMoveType : int;
+enum class PathfindingObjectType : int;
 
 struct EditedMarks
 {
@@ -153,6 +156,7 @@ struct PathDistanceStruct
     std::vector<MapCoord> Path;
     std::vector<unsigned char> Levels;
     std::vector<unsigned char> Heights;
+    bool Reachable = true;
 };
 
 struct HighBridgeLineStruct
@@ -198,6 +202,33 @@ struct MouseCommandBrush
 	int BrushSizeY;
 	int BrushSizeIndex;
 };
+
+// Animation preview playback (implemented in Body.AnimPreview.cpp).
+// Overlays an SHP animation on the already rendered iso view; playback is
+// interrupted by any mouse move or canvas redraw.
+namespace AnimPreview
+{
+    // Plays the animation registered in art.ini, anchored to the map cell coord.
+   // Loops until interrupted.
+    bool Play(const FString& animId, MapCoord coord);
+    // Stops playback and erases the remaining frame.
+    void Stop();
+    bool IsPlaying();
+    // True when animId is the animation currently being played.
+    bool IsSame(const FString& animId);
+
+    // Used by CFinalSunDlgExt::PreTranslateMessageExt to detect and drive the timer.
+    bool IsTimerMessage(UINT_PTR timerId);
+    void OnTimer();
+    // Called from SpecialDraw / SpecialDrawDirectX to interrupt on user interaction.
+    void OnUserInterrupt();
+
+    // Ends any playback and drops the cached frames. Must be called when the game
+    // resources are reloaded (CLoadingExt::ClearItemTypes): the cached frames are
+    // copies of the released SHP data, and the DirectX texture cache is keyed by
+    // their addresses.
+    void ClearCache();
+}
 
 class NOVTABLE CIsoViewExt : public CIsoView
 {
@@ -371,6 +402,8 @@ public:
 
     static bool SkipMapScreenConvert;
     static Bitmap* pFullBitmap;
+    inline static int RenderBitmapOffsetY = 0;
+    inline static Microsoft::WRL::ComPtr<ID3D11Texture2D> RenderStagingTexture;
     static bool DrawStructures;
     static bool DrawInfantries;
     static bool DrawUnits;
@@ -426,16 +459,12 @@ public:
     static bool EnableAutoTrack;
 
     static bool AutoPropertyBrush[4];
+    static int AutoPropertyBrushFacing[4]; // [0]=Aircraft [1]=Building [2]=Infantry [3]=Vehicle
 
     static COLORREF CellHilightColors[16];
     static int drawOffsetX;
     static int drawOffsetY;
     static Cell3DLocation CurrentDrawCellLocation;
-
-    static std::unordered_set<short> VisibleStructures;
-    static std::unordered_set<short> VisibleInfantries;
-    static std::unordered_set<short> VisibleUnits;
-    static std::unordered_set<short> VisibleAircrafts;
 
     static FHashSet MapRendererIgnoreObjects;
     static std::vector<EditedMarks> DrawEditedMarks;
@@ -463,17 +492,22 @@ public:
     static std::vector<TwoPointStruct> TwoPointDistance_Annotation;
     static std::vector<PathDistanceStruct> PathDistances;
     static PathfindingMoveType SelectedPathfindingType;
+    static PathfindingObjectType SelectedPathfindingObjectType;
     static bool EnableDestroyOverlay;
-    static bool EnableIgnoreObjects;
+    static bool EnableIgnoreBuilding;
+    static bool EnableIgnoreTree;
     static bool PathPreviewValid;
     static MapCoord PathPreviewStart;
     static MapCoord PathPreviewEnd;
     static PathfindingMoveType PathPreviewType;
+    static PathfindingObjectType PathPreviewObjectType;
     static bool PathPreviewDestroyOverlay;
-    static bool PathPreviewIgnoreObjects;
+    static bool PathPreviewIgnoreBuilding;
+    static bool PathPreviewIgnoreTree;
     static std::vector<MapCoord> PathPreviewPath;
     static std::vector<unsigned char> PathPreviewLevels;
     static std::vector<unsigned char> PathPreviewHeights;
+    static bool PathPreviewReachable;
     static MapCoord AxialSymmetryLine[2];
     static MapCoord TempCircle[2];
     static MapCoord TempCircle_Annotation[2];
@@ -493,6 +527,9 @@ public:
     static std::unordered_map<MouseCommandRecord, MouseCommandBrush, MouseCommandRecordHash> MouseCommandBrushSizeRecords;
     static MouseCommandRecord LastMouseCommand;
 	static void ChangeBrushSize_OnMouseMove();
+
+    static void BackupCurrentCommand();
+    static bool RestoreCurrentCommand();
 
 	static bool ReInitializingDDraw;
 

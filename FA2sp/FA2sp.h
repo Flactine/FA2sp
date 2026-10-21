@@ -2,6 +2,7 @@
 
 #include "Ext/FA2Expand.h"
 #include "Helpers/MultimapHelper.h"
+#include "Helpers/Helper.h"
 
 #include <Helpers/Macro.h>
 #include <MFC/ppmfc_cstring.h>
@@ -109,7 +110,9 @@ public:
     static bool ExtFacings;
     static bool ExtTilts;
     static bool ExtFacings_Drag;
+    static bool ExtFacings_Scroll;
     static bool ExtFacings_DragPreview;
+    static int SHPVehicle_FacingOffset;
     static int UndoRedoLimit;
     static bool UndoRedo_RecordObjects;
     static bool UndoRedo_ShiftPlaceTile;
@@ -130,6 +133,7 @@ public:
     static bool DisableLuaConsoleSafetyCheck;
     static bool VerticalLayout;
     static bool TileSetBrowserFloating;
+    static bool TileSetBrowserMultiLineTabs;
     static bool ViewObjectsFloating;
     static int RecentFileLimit;
     static int MultiSelectionColor;
@@ -237,6 +241,7 @@ public:
     static bool DisableDirectoryCheck;
     static bool ExtOverlays;
     static bool SaveMap_PreserveINISorting;
+    static bool SaveMap_AdaptiveSorting;
     static bool ExtMixLoader;
     static bool AVX2_Support;
     static bool AutoDarkMode;
@@ -257,7 +262,8 @@ public:
     static CUnitData DefaultUnitProperty;
     static CAircraftData DefaultAircraftProperty;
     static CBuildingData DefaultBuildingProperty;
-    static FMap<bool> SupportedFormats;
+	static bool DisplayRealHPinTechnoDlg;
+	static FMap<bool> SupportedFormats;
     static int OverlayDataLimit;
     static bool MCP_Enable;
     static int MCP_Port;
@@ -286,16 +292,9 @@ public:
     static void UpdateOptionTranslations();
 };
 
+
 namespace std
 {
-    template <>
-    struct hash<ppmfc::CString>
-    {
-        size_t operator()(const ppmfc::CString &str) const
-        {
-            return hash<string_view>()(string_view(str, str.GetLength()));
-        }
-    };
     template <>
     struct hash<CString>
     {

@@ -495,9 +495,10 @@ namespace ObjectBrowserSearch
             return hTree;
 
         int barH = BarHeight();
+        HWND hRootOwner = ::GetAncestor(hOwner, GA_ROOT);
         HWND hFrame = ::CreateWindowExA(0, "FA2spObjectBrowserFrame", "",
             (WS_OVERLAPPEDWINDOW | WS_CLIPCHILDREN) & ~WS_MINIMIZEBOX,
-            x, y, w, h + barH, nullptr, nullptr,
+            x, y, w, h + barH, hRootOwner, nullptr,
             (HINSTANCE)FA2sp::hInstance, nullptr);
         if (!hFrame)
             return hTree;
@@ -509,7 +510,7 @@ namespace ObjectBrowserSearch
         ::SetParent(hTree, hFrame);
         ::SetWindowPos(hTree, nullptr, 0, barH, w, h, SWP_NOZORDER);
 
-        ::SetWindowLong(hFrame, GWL_HWNDPARENT, (LONG)hOwner);
+        ::SetWindowLong(hFrame, GWL_HWNDPARENT, (LONG)hRootOwner);
 
         {
             DWORD dwEx = ::GetWindowLong(hFrame, GWL_EXSTYLE);
@@ -599,6 +600,31 @@ namespace ObjectBrowserSearch
         return ::CallWindowProc(framePrevProc, hWnd, msg, wParam, lParam);
     }
 
+    bool HandleViewMenuItem(CViewObjectsExt* pViewObjs, UINT nID)
+    {
+        if (!pViewObjs)
+            return false;
+
+        switch (nID)
+        {
+        case (UINT)CViewObjectsExt::ViewObjectsMenuItem::CollapseAll:
+            pViewObjs->Menu_CollapseAll();
+            return true;
+        case (UINT)CViewObjectsExt::ViewObjectsMenuItem::ExpandAll:
+            pViewObjs->Menu_ExpandAll();
+            return true;
+        case (UINT)CViewObjectsExt::ViewObjectsMenuItem::ScrollTop:
+            pViewObjs->Menu_ScrollToTop();
+            return true;
+        case (UINT)CViewObjectsExt::ViewObjectsMenuItem::ScrollBottom:
+            pViewObjs->Menu_ScrollToBottom();
+            return true;
+        default:
+            break;
+        }
+        return false;
+    }
+
     LRESULT CALLBACK ViewProc(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam)
     {
         switch (msg)
@@ -614,6 +640,17 @@ namespace ObjectBrowserSearch
             if (LOWORD(wParam) == IDC_ObjectSearch && HIWORD(wParam) == EN_CHANGE)
             {
                 ScheduleFilter(hWnd);
+                return 0;
+            }
+            if (HandleViewMenuItem(pView, LOWORD(wParam)))
+                return 0;
+            break;
+        case WM_RBUTTONDOWN:
+            if (pView)
+            {
+                POINT pt{ (short)LOWORD(lParam), (short)HIWORD(lParam) };
+                ::ClientToScreen(hWnd, &pt);
+                pView->ShowContextMenu(pt);
                 return 0;
             }
             break;
@@ -723,6 +760,8 @@ namespace ObjectBrowserSearch
         {
             if (hFrame)
                 framePrevProc = (WNDPROC)::SetWindowLongPtr(hFrame, GWLP_WNDPROC, (LONG_PTR)FrameProc);
+            // Subclass the tree itself as well so the context menu works in floating mode
+            viewPrevProc = (WNDPROC)::SetWindowLongPtr(hViewObjs, GWLP_WNDPROC, (LONG_PTR)ViewProc);
             if (hFrame)
                 LayoutFloating(hFrame);
         }
@@ -817,7 +856,7 @@ DEFINE_HOOK(4D2680, CMyViewFrame_OnCreateClient, 5)
                     dwStyle &= ~WS_MINIMIZEBOX;
                     ::SetWindowLong(hTileBrowser, GWL_STYLE, dwStyle);
                     ::SetParent(hTileBrowser, NULL);
-                    ::SetWindowLong(hTileBrowser, GWL_HWNDPARENT, (LONG)pThis->GetSafeHwnd());
+                    ::SetWindowLong(hTileBrowser, GWL_HWNDPARENT, (LONG)::GetAncestor(pThis->GetSafeHwnd(), GA_ROOT));
 
                     RECT rcMain;
                     ::GetWindowRect(pThis->GetSafeHwnd(), &rcMain);

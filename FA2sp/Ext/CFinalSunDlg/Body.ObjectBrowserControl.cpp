@@ -197,7 +197,7 @@ HTREEITEM CViewObjectsExt::InsertString(const char* pString, DWORD dwItemData,
                 auto& subTile = tile.TileBlockDatas[0];
 
                 FString fileName;
-                fileName.Format("%s-tile-%d-%d.bmp", CINI::CurrentDocument->GetString("Map", "Theater"),
+                fileName.Format("%s-tile-%d-%d.bmp", CINIExt::CurrentDocument->GetString("Map", "Theater"),
                     InsertingTileIndex, ExtConfigs::TreeViewCameo_Size);
 
                 std::string path = CFinalSunAppExt::ExePathExt();
@@ -246,7 +246,7 @@ HTREEITEM CViewObjectsExt::InsertString(const char* pString, DWORD dwItemData,
             case CLoadingExt::GameObjectType::Terrain:
             case CLoadingExt::GameObjectType::Smudge:
                 imageName = CLoadingExt::GetImageName(InsertingObjectID, 0);
-                fileID = FString(CINI::CurrentDocument->GetString("Map", "Theater")) + "-" +
+                fileID = FString(CINIExt::CurrentDocument->GetString("Map", "Theater")) + "-" +
                     CLoadingExt::GetExtension()->GetTerrainOrSmudgeFileID(InsertingObjectID);
                 break;
             case CLoadingExt::GameObjectType::Vehicle:
@@ -293,7 +293,7 @@ HTREEITEM CViewObjectsExt::InsertString(const char* pString, DWORD dwItemData,
             fileName.Format("%s-%d.bmp", fileID, ExtConfigs::TreeViewCameo_Size);
             if (InsertingOverlay > -1)
             {
-                fileName.Format("%s-overlay-%d-%d-%d.bmp", CINI::CurrentDocument->GetString("Map", "Theater"),
+                fileName.Format("%s-overlay-%d-%d-%d.bmp", CINIExt::CurrentDocument->GetString("Map", "Theater"),
                     InsertingOverlay, InsertingOverlayData, ExtConfigs::TreeViewCameo_Size);
             }
             path += "\\";
@@ -812,6 +812,105 @@ void CViewObjectsExt::ApplySearchFilter()
     RebuildTreeFromState();
 }
 
+namespace
+{
+    void ExpandAllChildren(HWND hTree, HTREEITEM hParent)
+    {
+        HTREEITEM hChild = TreeView_GetChild(hTree, hParent);
+        while (hChild)
+        {
+            TreeView_Expand(hTree, hChild, TVE_EXPAND);
+            ExpandAllChildren(hTree, hChild);
+            hChild = TreeView_GetNextSibling(hTree, hChild);
+        }
+    }
+
+    void CollapseAllChildren(HWND hTree, HTREEITEM hParent)
+    {
+        HTREEITEM hChild = TreeView_GetChild(hTree, hParent);
+        while (hChild)
+        {
+            CollapseAllChildren(hTree, hChild);
+            TreeView_Expand(hTree, hChild, TVE_COLLAPSE);
+            hChild = TreeView_GetNextSibling(hTree, hChild);
+        }
+    }
+}
+
+void CViewObjectsExt::ShowContextMenu(POINT pt)
+{
+    HMENU hPopupMenu = ::CreatePopupMenu();
+    ::AppendMenu(hPopupMenu, MF_STRING, (UINT_PTR)ViewObjectsMenuItem::CollapseAll,
+        Translations::TranslateOrDefault("ViewObjects.CollapseAll", "Collapse All"));
+    ::AppendMenu(hPopupMenu, MF_STRING, (UINT_PTR)ViewObjectsMenuItem::ExpandAll,
+        Translations::TranslateOrDefault("ViewObjects.ExpandAll", "Expand All"));
+    ::AppendMenu(hPopupMenu, MF_SEPARATOR, 0, nullptr);
+    ::AppendMenu(hPopupMenu, MF_STRING, (UINT_PTR)ViewObjectsMenuItem::ScrollTop,
+        Translations::TranslateOrDefault("ViewObjects.ScrollTop", "Scroll to Top"));
+    ::AppendMenu(hPopupMenu, MF_STRING, (UINT_PTR)ViewObjectsMenuItem::ScrollBottom,
+        Translations::TranslateOrDefault("ViewObjects.ScrollBottom", "Scroll to Bottom"));
+    ::TrackPopupMenu(hPopupMenu, TPM_VERTICAL | TPM_HORIZONTAL, pt.x, pt.y, NULL, this->GetSafeHwnd(), nullptr);
+    ::DestroyMenu(hPopupMenu);
+}
+
+void CViewObjectsExt::Menu_ExpandAll()
+{
+    HWND hTree = this->GetSafeHwnd();
+    if (!hTree)
+        return;
+
+    ::SendMessage(hTree, WM_SETREDRAW, FALSE, 0);
+    HTREEITEM hRoot = TreeView_GetRoot(hTree);
+    while (hRoot)
+    {
+        TreeView_Expand(hTree, hRoot, TVE_EXPAND);
+        ExpandAllChildren(hTree, hRoot);
+        hRoot = TreeView_GetNextSibling(hTree, hRoot);
+    }
+    ::SendMessage(hTree, WM_SETREDRAW, TRUE, 0);
+    ::InvalidateRect(hTree, nullptr, TRUE);
+}
+
+void CViewObjectsExt::Menu_CollapseAll()
+{
+    HWND hTree = this->GetSafeHwnd();
+    if (!hTree)
+        return;
+
+    ::SendMessage(hTree, WM_SETREDRAW, FALSE, 0);
+    HTREEITEM hRoot = TreeView_GetRoot(hTree);
+    while (hRoot)
+    {
+        CollapseAllChildren(hTree, hRoot);
+        TreeView_Expand(hTree, hRoot, TVE_COLLAPSE);
+        hRoot = TreeView_GetNextSibling(hTree, hRoot);
+    }
+    ::SendMessage(hTree, WM_SETREDRAW, TRUE, 0);
+    ::InvalidateRect(hTree, nullptr, TRUE);
+}
+
+void CViewObjectsExt::Menu_ScrollToTop()
+{
+    HWND hTree = this->GetSafeHwnd();
+    if (!hTree)
+        return;
+
+    ::SendMessage(hTree, WM_VSCROLL, MAKEWPARAM(SB_TOP, 0), 0);
+    if (HTREEITEM hFirst = TreeView_GetNextItem(hTree, nullptr, TVGN_FIRSTVISIBLE))
+        TreeView_EnsureVisible(hTree, hFirst);
+}
+
+void CViewObjectsExt::Menu_ScrollToBottom()
+{
+    HWND hTree = this->GetSafeHwnd();
+    if (!hTree)
+        return;
+
+    ::SendMessage(hTree, WM_VSCROLL, MAKEWPARAM(SB_BOTTOM, 0), 0);
+    if (HTREEITEM hLast = TreeView_GetNextItem(hTree, nullptr, TVGN_LASTVISIBLE))
+        TreeView_EnsureVisible(hTree, hLast);
+}
+
 void CViewObjectsExt::Redraw_Initialize()
 {
     KnownItem.clear();
@@ -823,7 +922,7 @@ void CViewObjectsExt::Redraw_Initialize()
     Owners.clear();
 
     auto& fadata = CINI::FAData();
-    auto& doc = CINI::CurrentDocument();
+    auto& doc = CINIExt::CurrentDocument();
     if (ExtConfigs::ObjectBrowser_GuessMode == 1)
     {
         auto loadOwner = []()
@@ -1026,7 +1125,7 @@ void CViewObjectsExt::Redraw_Ground()
     if (hGround == NULL)    return;
     InsertedTileIndices.clear();
 
-    auto& doc = CINI::CurrentDocument();
+    auto& doc = CINIExt::CurrentDocument();
     auto theater = doc.GetString("Map", "Theater");
     if (theater == "NEWURBAN")
         theater = "UBN";
@@ -1141,7 +1240,7 @@ void CViewObjectsExt::Redraw_Ground()
                         auto allowed = STDHelpers::SplitString(CINI::FAData().GetString(pKey.second, "AllowedTheater", ""));
                         if (allowed.size() > 0)
                             for (auto& a : allowed)
-                                if (a == CINI::CurrentDocument().GetString("Map", "Theater"))
+                                if (a == CINIExt::CurrentDocument().GetString("Map", "Theater"))
                                     add = true;
                         if (add)
                         {
@@ -1231,9 +1330,10 @@ void CViewObjectsExt::Redraw_Owner()
                         TreeViewIndex_House[i] = itr.second;
                         InsertingSpecialBitmap = false;
                     }
+                    i++;
                 }
-            }
-            if (ExtConfigs::PlayerAtXForTechnos)
+			}
+			if (ExtConfigs::PlayerAtXForTechnos)
             {
                 int index = 0;
                 for (const auto& player : playersAtX)
@@ -1263,12 +1363,17 @@ void CViewObjectsExt::Redraw_Owner()
         }
         else
         {
-            if (auto pSection = CINI::CurrentDocument->GetSection("Houses"))
+            if (auto pSection = CINIExt::CurrentDocument->GetSection("Houses"))
             {
                 auto& section = pSection->GetEntities();
                 size_t i = 0;
                 for (auto& itr : section)
                 {
+                    if (strcmp(itr.second, "Nod") == 0 || strcmp(itr.second, "GDI") == 0)
+                    {
+                        i++;
+                        continue;
+                    }
                     FString uiname = itr.second;
 
                     if (!ExtConfigs::NoHouseNameTranslation)
@@ -1316,6 +1421,11 @@ void CViewObjectsExt::Redraw_Owner()
                 size_t i = 0;
                 for (auto& itr : section)
                 {
+                    if (strcmp(itr.second, "Nod") == 0 || strcmp(itr.second, "GDI") == 0)
+                    {
+                        i++;
+                        continue;
+                    }
                     FString uiname = itr.second;
 
                     if (!ExtConfigs::NoHouseNameTranslation)
@@ -1380,12 +1490,17 @@ void CViewObjectsExt::Redraw_Owner()
         }
         else
         {
-            if (auto pSection = CINI::CurrentDocument->GetSection("Houses"))
+            if (auto pSection = CINIExt::CurrentDocument->GetSection("Houses"))
             {
                 auto& section = pSection->GetEntities();
                 size_t i = 0;
                 for (auto& itr : section)
                 {
+                    if (strcmp(itr.second, "Nod") == 0 || strcmp(itr.second, "GDI") == 0)
+                    {
+                        i++;
+                        continue;
+                    }
                     FString uiname = itr.second;
 
                     if (!ExtConfigs::NoHouseNameTranslation)
@@ -1682,7 +1797,7 @@ void CViewObjectsExt::Redraw_Infantry()
                 auto banned = STDHelpers::SplitString(CINI::FAData().GetString(pKey.second, "BannedTheater", ""));
                 if (banned.size() > 0)
                     for (auto& ban : banned)
-                        if (ban == CINI::CurrentDocument().GetString("Map", "Theater"))
+                        if (ban == CINIExt::CurrentDocument().GetString("Map", "Theater"))
                             add = false;
                 if (add)
                 {
@@ -1871,7 +1986,7 @@ void CViewObjectsExt::Redraw_Vehicle()
                 auto banned = STDHelpers::SplitString(CINI::FAData().GetString(pKey.second, "BannedTheater", ""));
                 if (banned.size() > 0)
                     for (auto& ban : banned)
-                        if (ban == CINI::CurrentDocument().GetString("Map", "Theater"))
+                        if (ban == CINIExt::CurrentDocument().GetString("Map", "Theater"))
                             add = false;
                 if (add)
                 {
@@ -2059,7 +2174,7 @@ void CViewObjectsExt::Redraw_Aircraft()
                 auto banned = STDHelpers::SplitString(CINI::FAData().GetString(pKey.second, "BannedTheater", ""));
                 if (banned.size() > 0)
                     for (auto& ban : banned)
-                        if (ban == CINI::CurrentDocument().GetString("Map", "Theater"))
+                        if (ban == CINIExt::CurrentDocument().GetString("Map", "Theater"))
                             add = false;
                 if (add)
                 {
@@ -2117,7 +2232,7 @@ void CViewObjectsExt::Redraw_Building()
 
     auto& fadata = CINI::FAData();
     auto& art = CINI::Art();
-    auto& doc = CINI::CurrentDocument();
+    auto& doc = CINIExt::CurrentDocument();
 
     int i = 0;
     if (auto sides = fadata.GetSection(ExtraWindow::GetTranslatedSectionName("Sides")))
@@ -2285,7 +2400,7 @@ void CViewObjectsExt::Redraw_Building()
                 auto banned = STDHelpers::SplitString(CINI::FAData().GetString(pKey.second, "BannedTheater", ""));
                 if (banned.size() > 0)
                     for (auto& ban : banned)
-                        if (ban == CINI::CurrentDocument().GetString("Map", "Theater"))
+                        if (ban == CINIExt::CurrentDocument().GetString("Map", "Theater"))
                             add = false;
                 if (add)
                 {
@@ -2424,7 +2539,7 @@ void CViewObjectsExt::Redraw_Terrain()
                 auto banned = STDHelpers::SplitString(CINI::FAData().GetString(pKey.second, "BannedTheater", ""));
                 if (banned.size() > 0)
                     for (auto& ban : banned)
-                        if (ban == CINI::CurrentDocument().GetString("Map", "Theater"))
+                        if (ban == CINIExt::CurrentDocument().GetString("Map", "Theater"))
                             add = false;
                 if (add)
                 {
@@ -2508,7 +2623,7 @@ void CViewObjectsExt::Redraw_Smudge()
                 auto banned = STDHelpers::SplitString(CINI::FAData().GetString(pKey.second, "BannedTheater", ""));
                 if (banned.size() > 0)
                     for (auto& ban : banned)
-                        if (ban == CINI::CurrentDocument().GetString("Map", "Theater"))
+                        if (ban == CINIExt::CurrentDocument().GetString("Map", "Theater"))
                             add = false;
                 if (add)
                 {
@@ -2794,7 +2909,7 @@ void CViewObjectsExt::Redraw_Overlay()
                 auto banned = STDHelpers::SplitString(CINI::FAData().GetString(pKey.second, "BannedTheater", ""));
                 if (banned.size() > 0)
                     for (auto& ban : banned)
-                        if (ban == CINI::CurrentDocument().GetString("Map", "Theater"))
+                        if (ban == CINIExt::CurrentDocument().GetString("Map", "Theater"))
                             add = false;
                 if (add)
                 {
@@ -2980,6 +3095,7 @@ void CViewObjectsExt::Redraw_MultiSelection()
     this->InsertTranslatedString("MultiSelectionCustomDelete", Const_MultiSelection + ConnectedDelete, hMultiSelection);
 
     this->InsertTranslatedString("MultiSelectionHide", Const_MultiSelection + ReplaceHide, hMultiSelection);
+    this->InsertTranslatedString("MultiSelectionInvert", Const_MultiSelection + InvertSelection, hMultiSelection);
     this->InsertTranslatedString("MultiSelectionAllDelete", Const_MultiSelection + AllDelete, hMultiSelection);
 
 }
@@ -3201,20 +3317,19 @@ void CViewObjectsExt::ModifyOre(int X, int Y)
 			{
 				data = getValidOreData(data);
 				int moneyDelta = 0;
-				int olyPos = y + x * 512;
+				int olyPos = y + x * CMapDataExt::X_PLUS_Y_LIMIT;
 				int pos = pExt->GetCoordIndex(x, y);
 
-				pExt->DeleteTiberium(std::min(ovr, (word)0xFF), pExt->OverlayData[olyPos]);
+				pExt->DeleteTiberium(std::min(ovr, (word)0xFF), ovrd);
 				if (data >= 0)
 				{
-					pExt->OverlayData[olyPos] = data;
+					pExt->NewOverlayData[olyPos] = data;
 					pExt->CellDatas[pos].OverlayData = data;
 				}
 				else
 				{
-					pExt->Overlay[olyPos] = 0xFF;
 					pExt->NewOverlay[olyPos] = 0xFFFF;
-					pExt->OverlayData[olyPos] = 0;
+					pExt->NewOverlayData[olyPos] = 0;
 					pExt->CellDatas[pos].Overlay = 0xFF;
 					pExt->CellDataExts[pos].NewOverlay = 0xFFFF;
 					pExt->CellDatas[pos].OverlayData = 0;
@@ -3252,9 +3367,9 @@ void CViewObjectsExt::AddAnnotation(int X, int Y)
     CAnnotationDlg dlg;
 
     bool folded = false;
-    if (CINI::CurrentDocument->KeyExists("Annotations", key))
+    if (CINIExt::CurrentDocument->KeyExists("Annotations", key))
     {
-        auto atoms = STDHelpers::SplitString(CINI::CurrentDocument->GetString("Annotations", key), 6);
+        auto atoms = STDHelpers::SplitString(CINIExt::CurrentDocument->GetString("Annotations", key), 6);
         dlg.m_Text = atoms[5];
         for (int i = 6; i < atoms.size() - 1; i++)
         {
@@ -3288,7 +3403,7 @@ void CViewObjectsExt::AddAnnotation(int X, int Y)
         STDHelpers::ColorRefRGBToHexString(textColor), STDHelpers::ColorRefRGBToHexString(bgColor),
         dlg.m_Text);
 
-    CINI::CurrentDocument->WriteString("Annotations", key, value);
+    CINIExt::CurrentDocument->WriteString("Annotations", key, value);
     auto& cellExt = CMapDataExt::CellDataExts[CMapData::Instance->GetCoordIndex(X, Y)];
     cellExt.HasAnnotation = true;
 
@@ -3304,7 +3419,7 @@ void CViewObjectsExt::RemoveAnnotation(int X, int Y)
 
     auto& cellExt = CMapDataExt::CellDataExts[CMapData::Instance->GetCoordIndex(X, Y)];
     cellExt.HasAnnotation = false;
-    if (CINI::CurrentDocument->KeyExists("Annotations", key))
+    if (CINIExt::CurrentDocument->KeyExists("Annotations", key))
     {
         deleteAnnotation = true;
     }
@@ -3345,11 +3460,11 @@ void CViewObjectsExt::RemoveAnnotation(int X, int Y)
 
         if (deleteAnnotation)
         {
-            CINI::CurrentDocument->DeleteKey("Annotations", key);
+            CINIExt::CurrentDocument->DeleteKey("Annotations", key);
         }
         if (deleteGeometricAnnotation)
         {
-            if (auto pSection = CINI::CurrentDocument->GetSection("GeometricAnnotations"))
+            if (auto pSection = CINIExt::CurrentDocument->GetSection("GeometricAnnotations"))
             {
                 std::vector<FString> keysToDelete;
                 for (auto& [key, value] : pSection->GetEntities())
@@ -3371,7 +3486,7 @@ void CViewObjectsExt::RemoveAnnotation(int X, int Y)
         
                 for (const auto& key : keysToDelete)
                 {
-                    CINI::CurrentDocument->DeleteKey("GeometricAnnotations", key);
+                    CINIExt::CurrentDocument->DeleteKey("GeometricAnnotations", key);
                 }
             }
         }
@@ -3411,16 +3526,16 @@ void CViewObjectsExt::SetWpTagColor(int X, int Y, bool isWp)
     {
         if (cell->Waypoint > -1)
         {
-            auto id = CINI::CurrentDocument->GetKeyAt("Waypoints", cell->Waypoint);
+            auto id = CINIExt::CurrentDocument->GetKeyAt("Waypoints", cell->Waypoint);
             if (!id.IsEmpty())
             {
                 CMapDataExt::CustomWaypointColors[id] = color;
                 ppmfc::CString key = "Wp";
                 key += id;
                 if (color != ExtConfigs::DisplayColor_Waypoint)
-                    CINI::CurrentDocument->WriteString("FA2spColors", key, value);
+                    CINIExt::CurrentDocument->WriteString("FA2spColors", key, value);
                 else
-                    CINI::CurrentDocument->DeleteKey("FA2spColors", key);
+                    CINIExt::CurrentDocument->DeleteKey("FA2spColors", key);
                 ::RedrawWindow(CFinalSunDlg::Instance->MyViewFrame.pIsoView->m_hWnd, NULL, NULL, RDW_INVALIDATE | RDW_UPDATENOW);
             }
         }
@@ -3429,16 +3544,16 @@ void CViewObjectsExt::SetWpTagColor(int X, int Y, bool isWp)
     {
         if (cell->CellTag > -1)
         {
-            auto id = CINI::CurrentDocument->GetStringAt("CellTags", cell->CellTag);
+            auto id = CINIExt::CurrentDocument->GetStringAt("CellTags", cell->CellTag);
             if (!id.IsEmpty())
             {
                 CMapDataExt::CustomCelltagColors[id] = color;
                 ppmfc::CString key = "Tag";
                 key += id;
                 if (color != ExtConfigs::DisplayColor_Celltag)
-                    CINI::CurrentDocument->WriteString("FA2spColors", key, value);
+                    CINIExt::CurrentDocument->WriteString("FA2spColors", key, value);
                 else
-                    CINI::CurrentDocument->DeleteKey("FA2spColors", key);
+                    CINIExt::CurrentDocument->DeleteKey("FA2spColors", key);
                 ::RedrawWindow(CFinalSunDlg::Instance->MyViewFrame.pIsoView->m_hWnd, NULL, NULL, RDW_INVALIDATE | RDW_UPDATENOW);
             }
         }
@@ -3453,11 +3568,11 @@ void CViewObjectsExt::RemoveWpTagColor(int X, int Y, bool isWp)
     {
         if (cell->Waypoint > -1)
         {
-            auto id = CINI::CurrentDocument->GetKeyAt("Waypoints", cell->Waypoint);
+            auto id = CINIExt::CurrentDocument->GetKeyAt("Waypoints", cell->Waypoint);
             CMapDataExt::CustomWaypointColors.erase(id);
             ppmfc::CString key = "Wp";
             key += id;
-            CINI::CurrentDocument->DeleteKey("FA2spColors", key);
+            CINIExt::CurrentDocument->DeleteKey("FA2spColors", key);
             ::RedrawWindow(CFinalSunDlg::Instance->MyViewFrame.pIsoView->m_hWnd, NULL, NULL, RDW_INVALIDATE | RDW_UPDATENOW);
         }
     }
@@ -3465,11 +3580,11 @@ void CViewObjectsExt::RemoveWpTagColor(int X, int Y, bool isWp)
     {
         if (cell->CellTag > -1)
         {
-            auto id = CINI::CurrentDocument->GetStringAt("CellTags", cell->CellTag);
+            auto id = CINIExt::CurrentDocument->GetStringAt("CellTags", cell->CellTag);
             CMapDataExt::CustomCelltagColors.erase(id);
             ppmfc::CString key = "Tag";
             key += id;
-            CINI::CurrentDocument->DeleteKey("FA2spColors", key);
+            CINIExt::CurrentDocument->DeleteKey("FA2spColors", key);
             ::RedrawWindow(CFinalSunDlg::Instance->MyViewFrame.pIsoView->m_hWnd, NULL, NULL, RDW_INVALIDATE | RDW_UPDATENOW);
         }
     }
@@ -3490,7 +3605,7 @@ void CViewObjectsExt::DeleteTube(int X, int Y)
                     CMapDataExt::MakeObjectRecord(ObjectRecord::RecordType::Tunnel);
                     once = true;
                 }
-                CINI::CurrentDocument->DeleteKey("Tubes", tube.key);
+                CINIExt::CurrentDocument->DeleteKey("Tubes", tube.key);
                 break;
             }
         }
@@ -3502,7 +3617,7 @@ void CViewObjectsExt::DeleteTube(int X, int Y)
 void CViewObjectsExt::DeleteCelltag(int X, int Y)
 {
     auto pIsoView = CIsoViewExt::GetExtension();
-    auto pSection = CINI::CurrentDocument->GetSection("CellTags");
+    auto pSection = CINIExt::CurrentDocument->GetSection("CellTags");
     if (!pSection)
         return;
 
@@ -3531,7 +3646,7 @@ void CViewObjectsExt::DeleteCelltag(int X, int Y)
     {
         for (auto& key : keys)
         {
-            CINI::CurrentDocument->DeleteKey(pSection, key);
+            CINIExt::CurrentDocument->DeleteKey(pSection, key);
         }
         CMapData::Instance->UpdateFieldCelltagData(FALSE);
         ::RedrawWindow(CFinalSunDlg::Instance->MyViewFrame.pIsoView->m_hWnd, 0, 0, RDW_UPDATENOW | RDW_INVALIDATE);
@@ -3550,7 +3665,7 @@ void CViewObjectsExt::MoveBaseNodeOrder(int X, int Y)
 
     char key[10];
     sprintf(key, "%03d", cell->BaseNode.BasenodeID);
-    auto&& atoms = STDHelpers::SplitString(CINI::CurrentDocument->GetString(cell->BaseNode.House, key), 2);
+    auto&& atoms = STDHelpers::SplitString(CINIExt::CurrentDocument->GetString(cell->BaseNode.House, key), 2);
     const auto& ID = atoms[0];
     targetIndex = cell->BaseNode.BasenodeID;
 
@@ -3602,7 +3717,7 @@ void CViewObjectsExt::MoveBaseNode(int X, int Y)
 
         char key[10];
         sprintf(key, "%03d", cell->BaseNode.BasenodeID);
-        auto&& atoms = STDHelpers::SplitString(CINI::CurrentDocument->GetString(cell->BaseNode.House, key), 2);
+        auto&& atoms = STDHelpers::SplitString(CINIExt::CurrentDocument->GetString(cell->BaseNode.House, key), 2);
         const auto& ID = atoms[0];
         int bnX = atoi(atoms[2]);
         int bnY = atoi(atoms[1]);
@@ -4456,12 +4571,19 @@ void CViewObjectsExt::InitializeOnUpdateEngine()
     CIsoViewExt::EnableAutoTrack = false;
 
     CViewObjectsExt::CurrentConnectedTileType = -1;
+    // drop any pending AutoConnect preview before the tool state is reset
+    CViewObjectsExt::AutoConnect_Cancel();
+    CViewObjectsExt::AutoConnect_ResetHistory();
     CViewObjectsExt::CliffConnectionCoord.X = -1;
     CViewObjectsExt::CliffConnectionCoord.Y = -1;
     CViewObjectsExt::CliffConnectionHeight = -1;
     CViewObjectsExt::LastCTTile = -1;
+    CViewObjectsExt::CliffConnectionTile = -1;
     CViewObjectsExt::CliffConnectionCoordRecords.clear();
     CViewObjectsExt::LastPlacedCT.Index = -1;
+    CViewObjectsExt::ThisPlacedCT.Index = -1;
+    CViewObjectsExt::LastTempPlacedCTIndex = -1;
+    CViewObjectsExt::LastTempFacing = -1;
     CViewObjectsExt::LastSuccessfulIndex = -1;
     CViewObjectsExt::NextCTHeightOffset = 0;
     CViewObjectsExt::HeightChanged = false;
@@ -5327,6 +5449,14 @@ bool CViewObjectsExt::UpdateEngine(int nData)
                     cell->Flag.IsHiddenCell = true;
                 }
             }
+            ::RedrawWindow(CFinalSunDlg::Instance->MyViewFrame.pIsoView->m_hWnd, 0, 0, RDW_UPDATENOW | RDW_INVALIDATE);
+            return true;
+        }
+        else if (nData == InvertSelection)
+        {
+            MultiSelection::InvertSelection();
+            CIsoView::CurrentCommand->Command = 0x1D;
+            CIsoView::CurrentCommand->Type = 114;
             ::RedrawWindow(CFinalSunDlg::Instance->MyViewFrame.pIsoView->m_hWnd, 0, 0, RDW_UPDATENOW | RDW_INVALIDATE);
             return true;
         }

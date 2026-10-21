@@ -1,4 +1,5 @@
 #include "Body.h"
+#include "../../Miscs/Hooks.INI.h"
 
 #include <FA2PP.h>
 #include <Helpers/Macro.h>
@@ -12,6 +13,7 @@
 #include "../../Helpers/STDHelpers.h"
 #include "../CIsoView/Body.h"
 #include "../CMapData/Body.h"
+#include "../CTileSetBrowserView/Body.h"
 #include "../../ExtraWindow/CTerrainGenerator/CTerrainGenerator.h"
 #include "../../ExtraWindow/CLuaConsole/CLuaConsole.h"
 #include "../../Helpers/Helper.h"
@@ -305,7 +307,8 @@ DEFINE_HOOK(45CD22, CIsoView_OnMouseMove_LButtonDown_PlaceObject, 9)
 
 DEFINE_HOOK(4F0A40, CTerrainDlg_OnSelchangeTileset, 7)
 {
-    CViewObjectsExt::InitializeOnUpdateEngine();
+    if (!CTileSetBrowserViewExt::KeepCurrentCommand)
+        CViewObjectsExt::InitializeOnUpdateEngine();
 
     return 0;
 }
@@ -321,7 +324,19 @@ DEFINE_HOOK(4572E1, CIsoView_OnMouseMove_Cliff, 6)
     auto point = CIsoViewExt::GetExtension()->GetCurrentMapCoord(CIsoView::GetInstance()->MouseCurrentPosition);
     if (CIsoView::CurrentCommand->Command == 0x1E)
     {
-        CViewObjectsExt::PlaceConnectedTile_OnMouseMove(point.X, point.Y);
+        // A connection point that sits just outside the map (e.g. x == -1) is a
+        // valid chain end with all of its blocks still on the map, so only the
+        // height marker (-1 == no anchor) may disable the AutoConnect preview.
+        if (CViewObjectsExt::PlaceConnectedTile_AutoConnect
+            && CViewObjectsExt::CliffConnectionHeight != -1)
+        {
+            // live whole-path preview following the cursor
+            CViewObjectsExt::AutoConnect_UpdatePreview(point.X, point.Y);
+        }
+        else
+        {
+            CViewObjectsExt::PlaceConnectedTile_OnMouseMove(point.X, point.Y);
+        }
     }
     if (CViewObjectsExt::PlacingRandomRock >= 0)
     {
@@ -556,6 +571,12 @@ DEFINE_HOOK(4347B8, CFinalSunDlg_OnEditUndo, 6)
 {
     if (CIsoView::CurrentCommand->Command == 0x1E)
     {
+        // drop any pending AutoConnect preview first: it writes live onto the
+        // map and holds a stale start state, which would corrupt the undo
+        CViewObjectsExt::AutoConnect_Cancel();
+        // also remove the undone batch (AutoConnect or manual single segment)
+        // from the cross-batch avoidance history
+        CViewObjectsExt::AutoConnect_UndoLastBatch();
         if (!CViewObjectsExt::CliffConnectionCoordRecords.empty())
         {
             CViewObjectsExt::CliffConnectionCoord = CViewObjectsExt::CliffConnectionCoordRecords.back();
@@ -1186,7 +1207,7 @@ DEFINE_HOOK(461766, CIsoView_OnLButtonDown_PropertyBrush, 5)
                                 continue;
                 
                             int intKey = gx * 1000 + gy;
-                            CINI::CurrentDocument->WriteString("CellTags", std::to_string(intKey).c_str(), CIsoView::CurrentCommand->ObjectID);
+                            CINIExt::CurrentDocument->WriteString("CellTags", std::to_string(intKey).c_str(), CIsoView::CurrentCommand->ObjectID);
                         }
                     }         
                 }

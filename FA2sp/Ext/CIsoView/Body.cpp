@@ -1,4 +1,5 @@
 #include "Body.h"
+#include "../../Miscs/Hooks.INI.h"
 
 #include "../../FA2sp.h"
 #include <WindowsX.h>
@@ -80,6 +81,7 @@ bool CIsoViewExt::UsingNewRaiseGround = false;
 RendererLighting CIsoViewExt::RenderLighing = RendererLighting::Current;
 
 bool CIsoViewExt::AutoPropertyBrush[4] = {false};
+int CIsoViewExt::AutoPropertyBrushFacing[4] = {0, 0, 0, 0}; // [0]=Aircraft [1]=Building [2]=Infantry [3]=Vehicle
 bool CIsoViewExt::IsPressingALT = false;
 bool CIsoViewExt::IsPressingTube = false;
 bool CIsoViewExt::EnableLiveDistanceRuler = false;
@@ -88,17 +90,22 @@ std::vector<TwoPointStruct> CIsoViewExt::TwoPointDistance{};
 std::vector<TwoPointStruct> CIsoViewExt::TwoPointDistance_Annotation{};
 std::vector<PathDistanceStruct> CIsoViewExt::PathDistances{};
 PathfindingMoveType CIsoViewExt::SelectedPathfindingType = PathfindingMoveType::NormalLand;
+PathfindingObjectType CIsoViewExt::SelectedPathfindingObjectType = PathfindingObjectType::Vehicle;
 bool CIsoViewExt::EnableDestroyOverlay = false;
-bool CIsoViewExt::EnableIgnoreObjects = false;
+bool CIsoViewExt::EnableIgnoreBuilding = false;
+bool CIsoViewExt::EnableIgnoreTree = false;
 bool CIsoViewExt::PathPreviewValid = false;
 MapCoord CIsoViewExt::PathPreviewStart{};
 MapCoord CIsoViewExt::PathPreviewEnd{};
 PathfindingMoveType CIsoViewExt::PathPreviewType = PathfindingMoveType::NormalLand;
+PathfindingObjectType CIsoViewExt::PathPreviewObjectType = PathfindingObjectType::Vehicle;
 bool CIsoViewExt::PathPreviewDestroyOverlay = false;
-bool CIsoViewExt::PathPreviewIgnoreObjects = false;
+bool CIsoViewExt::PathPreviewIgnoreBuilding = false;
+bool CIsoViewExt::PathPreviewIgnoreTree = false;
 std::vector<MapCoord> CIsoViewExt::PathPreviewPath{};
 std::vector<unsigned char> CIsoViewExt::PathPreviewLevels{};
 std::vector<unsigned char> CIsoViewExt::PathPreviewHeights{};
+bool CIsoViewExt::PathPreviewReachable = false;
 MapCoord CIsoViewExt::AxialSymmetryLine[2]{};
 MapCoord CIsoViewExt::TempCircle[2]{};
 MapCoord CIsoViewExt::TempCircle_Annotation[2]{};
@@ -137,6 +144,54 @@ double CIsoViewExt::ScaledMin = 0.25;
 UINT CIsoViewExt::nFlagsMove;
 bool CIsoViewExt::LastCommand::requestSubpos = false;
 CIsoViewExt::LastCommand CIsoViewExt::LastAltCommand;
+
+namespace
+{
+    struct CurrentCommandSnapshot
+    {
+        bool Valid = false;
+        int Command = 0;
+        int Type = 0;
+        int Param = 0;
+        int Overlay = 0;
+        int OverlayData = 0;
+        int Height = 0;
+        FString ObjectID;
+    };
+
+    CurrentCommandSnapshot s_CurrentCommandSnapshot;
+}
+
+void CIsoViewExt::BackupCurrentCommand()
+{
+    auto const& cmd = CIsoView::CurrentCommand.get();
+
+    s_CurrentCommandSnapshot.Command = cmd.Command;
+    s_CurrentCommandSnapshot.Type = cmd.Type;
+    s_CurrentCommandSnapshot.Param = cmd.Param;
+    s_CurrentCommandSnapshot.Overlay = cmd.Overlay;
+    s_CurrentCommandSnapshot.OverlayData = cmd.OverlayData;
+    s_CurrentCommandSnapshot.Height = cmd.Height;
+    s_CurrentCommandSnapshot.ObjectID = cmd.ObjectID.GetString();
+    s_CurrentCommandSnapshot.Valid = true;
+}
+
+bool CIsoViewExt::RestoreCurrentCommand()
+{
+    if (!s_CurrentCommandSnapshot.Valid)
+        return false;
+
+    auto& cmd = CIsoView::CurrentCommand.get();
+
+    cmd.Command = s_CurrentCommandSnapshot.Command;
+    cmd.Type = s_CurrentCommandSnapshot.Type;
+    cmd.Param = s_CurrentCommandSnapshot.Param;
+    cmd.Overlay = s_CurrentCommandSnapshot.Overlay;
+    cmd.OverlayData = s_CurrentCommandSnapshot.OverlayData;
+    cmd.Height = s_CurrentCommandSnapshot.Height;
+    cmd.ObjectID = s_CurrentCommandSnapshot.ObjectID.c_str();
+    return true;
+}
 
 COLORREF CIsoViewExt::CellHilightColors[16] = {
     RGB(255, 255, 255), // level 0
@@ -264,7 +319,7 @@ void CIsoViewExt::ConfirmTube(bool addReverse)
         value += direc;
     }
     value += ",-1";
-    CINI::CurrentDocument->WriteString("Tubes", key, value);
+    CINIExt::CurrentDocument->WriteString("Tubes", key, value);
 
     if (addReverse)
     {
@@ -277,7 +332,7 @@ void CIsoViewExt::ConfirmTube(bool addReverse)
             value += direc;
         }
         value += ",-1";
-        CINI::CurrentDocument->WriteString("Tubes", key, value);
+        CINIExt::CurrentDocument->WriteString("Tubes", key, value);
     }
 
     CMapData::Instance->UpdateFieldTubeData(false);
@@ -3554,6 +3609,21 @@ void CIsoViewExt::DrawCreditOnMap(HDC hDC, bool bScreenSpace)
                 ::TextOut(hDC, rect.left + 10, rect.top + 10 + lineHeight * leftIndex++, buffer, buffer.GetLength());
             }
         }
+        if (CIsoView::CurrentCommand->Command == 0x1E)
+        {
+            FString buffer = Translations::TranslateOrDefault(
+                CViewObjectsExt::PlaceConnectedTile_AutoConnect ? "BatchConnectOn" : "BatchConnectOff", 
+                CViewObjectsExt::PlaceConnectedTile_AutoConnect ? "BatchConnect: On, press 'A' to switch" : "BatchConnect: Off, press 'A' to switch");
+            if (ExtConfigs::DirectXRendering)
+            {
+                TextOutDirectX(rect.left + 10, rect.top + 10 + lineHeight * leftIndex, buffer, fontSize);
+                leftIndex++;
+            }
+            else
+            {
+                ::TextOut(hDC, rect.left + 10, rect.top + 10 + lineHeight * leftIndex++, buffer, buffer.GetLength());
+            }
+        }
     }
 }
 
@@ -3921,15 +3991,19 @@ void CIsoViewExt::DrawOtherMeasurementTools(HDC hDC, const RECT &rect, bool bScr
             if (!PathPreviewValid || PathPreviewStart != pathDist.Point1
                 || PathPreviewEnd != endCoord || PathPreviewType != SelectedPathfindingType
                 || PathPreviewDestroyOverlay != EnableDestroyOverlay
-                || PathPreviewIgnoreObjects != EnableIgnoreObjects)
+                || PathPreviewIgnoreBuilding != EnableIgnoreBuilding
+                || PathPreviewIgnoreTree != EnableIgnoreTree
+                || PathPreviewObjectType != SelectedPathfindingObjectType)
             {
                 PathPreviewStart = pathDist.Point1;
                 PathPreviewEnd = endCoord;
                 PathPreviewType = SelectedPathfindingType;
+                PathPreviewObjectType = SelectedPathfindingObjectType;
                 PathPreviewDestroyOverlay = EnableDestroyOverlay;
-                PathPreviewIgnoreObjects = EnableIgnoreObjects;
-                PathPreviewPath = CMapDataExt::FindPath(PathPreviewStart, PathPreviewEnd, PathPreviewType,
-                    PathPreviewDestroyOverlay, PathPreviewIgnoreObjects, &PathPreviewLevels, true, &PathPreviewHeights);
+                PathPreviewIgnoreBuilding = EnableIgnoreBuilding;
+                PathPreviewIgnoreTree = EnableIgnoreTree;
+                PathPreviewPath = CMapDataExt::FindPath(PathPreviewStart, PathPreviewEnd, PathPreviewType, PathPreviewObjectType,
+                    PathPreviewDestroyOverlay, PathPreviewIgnoreBuilding, PathPreviewIgnoreTree, &PathPreviewLevels, true, &PathPreviewHeights, &PathPreviewReachable);
                 PathPreviewValid = true;
             }
             pPath = &PathPreviewPath;
@@ -3967,7 +4041,8 @@ void CIsoViewExt::DrawOtherMeasurementTools(HDC hDC, const RECT &rect, bool bScr
         int pathDrawX = ex - CIsoViewExt::drawOffsetX + 30;
         int pathDrawY = ey - CIsoViewExt::drawOffsetY - 15;
         FString buffer;
-        if (pPath->empty() && pathDist.Point1 != endCoord)
+        const bool reachable = (pathDist.Point2 == MapCoord{0, 0}) ? PathPreviewReachable : pathDist.Reachable;
+        if (!reachable)
         {
             buffer.Format(Translations::TranslateOrDefault("DistanceRuler.PathUnreachable", "Path Distance: Unreachable"));
         }
@@ -4311,6 +4386,11 @@ CRect CIsoViewExt::GetVisibleIsoViewRect()
 
 void CIsoViewExt::SpecialDraw(LPDIRECTDRAWSURFACE7 surface, int specialDraw)
 {
+    // Mouse moves and canvas redraws end up here, so stop the animation preview
+    // (the caller's rendering flow repaints the visible area right after this,
+    // so nothing has to be erased here).
+    AnimPreview::OnUserInterrupt();
+
     auto pThis = CIsoViewExt::GetExtension();
     switch (specialDraw)
     {
@@ -4552,6 +4632,9 @@ void CIsoViewExt::SpecialDraw(LPDIRECTDRAWSURFACE7 surface, int specialDraw)
 
 void CIsoViewExt::SpecialDrawDirectX(int specialDraw)
 {
+    // Same as SpecialDraw: an interactive redraw stops the animation preview.
+    AnimPreview::OnUserInterrupt();
+
     auto pThis = CIsoViewExt::GetExtension();
     HDC hDC = nullptr;
     static CRect rect = {};
@@ -5795,6 +5878,9 @@ bool CIsoViewExt::BlitDDSurfaceRectToBitmap(
     if (rc.right <= rc.left || rc.bottom <= rc.top)
         return true;
 
+    dstY -= RenderBitmapOffsetY;
+    if (dstX < 0) { rc.left -= dstX; dstX = 0; }
+    if (dstY < 0) { rc.top -= dstY; dstY = 0; }
     int srcW = rc.right - rc.left;
     int srcH = rc.bottom - rc.top;
 
@@ -5811,11 +5897,14 @@ bool CIsoViewExt::BlitDDSurfaceRectToBitmap(
         return true;
 
     Graphics g(pFullBitmap);
+    if (g.GetLastStatus() != Gdiplus::Ok) return false;
     HDC hdcTarget = g.GetHDC();
+    if (!hdcTarget) return false;
     BOOL bOK = BitBlt(hdcTarget, dstX, dstY, srcW, srcH, hDC, rc.left, rc.top, SRCCOPY);
+    if (!bOK) Logger::Error("Map export BitBlt failed: %d\n", int(GetLastError()));
     g.ReleaseHDC(hdcTarget);
 
-    return bOK == TRUE;
+    return bOK == TRUE && g.GetLastStatus() == Gdiplus::Ok;
 }
 
 int CIsoViewExt::GetOverlayDrawOffset(WORD nOverlay, BYTE nOverlayData)

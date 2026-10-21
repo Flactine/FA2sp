@@ -1,6 +1,7 @@
 #pragma once
 #include "FA2PP.h"
 #include "../Helpers/MultimapHelper.h"
+#include "../Miscs/Hooks.INI.h"
 #include <functional>
 
 class FString;
@@ -94,6 +95,24 @@ struct VCBItemEntry
     bool leftSideBackground = false;
 };
 
+enum class ParamType : int
+{
+    None = 0,
+    CSF,
+    Team,
+    Trigger,
+    Tag,
+    Taskforce,
+    Script,
+    AITrigger,
+    Waypoint,
+    LocalVariable,
+    Eva,
+    Sound,
+    Theme,
+    Animation
+};
+
 namespace VCBColorHelpers
 {
     double GetLuminance(COLORREF color);
@@ -170,6 +189,7 @@ public:
     static void UpdateListBoxHScroll(HWND hListBox);
 	static COLORREF GetTriggerColor(const FString& trigger);
 	static void SetTriggerColor(const FString& trigger, COLORREF color);
+    static ParamType GetParamType(const FString& paramIdx);
 
     static void DisableOtherWindows(HWND hDlg);
     static void RestoreDisabledWindows();
@@ -183,9 +203,27 @@ private:
     };
     static BOOL CALLBACK DisableOtherWindowsProc(HWND hEnum, LPARAM lParam);
     static std::vector<HWND> s_disabledWindows;
-    static CINI& map;
+    static CINIExt& map;
     static CINI& fadata;
     static MultimapHelper& rules;
+};
+
+class SoundPlayer
+{
+public:
+    enum JumpSource : int
+    {
+        TriggerEvent = 0,
+        TriggerAction = 1,
+        ScriptParam = 2,
+    };
+
+    static void PlayThemeSoundFile(const char* pFileName);
+    static void PlayBagSound(const char* pSoundName, int volume = 100);
+    static void Stop();
+    static bool IsPlaying();
+    static bool IsSameJumpTarget(int source, int index, const FString& soundName);
+    static void SetJumpTarget(int source, int index, const FString& soundName);
 };
 
 // Reusable transparency helper for ExtraWindow modeless dialogs.
@@ -515,16 +553,28 @@ public:
     void Detach();
 
 private:
+    enum
+    {
+        HoverTimerId = 0x71,    // auto-show delay while hovering
+        CheckTimerId = 0x72,    // cursor polling while the tip is shown
+        HoverDelayMs = 800,
+        CheckIntervalMs = 1000,
+    };
+
     HWND hStatic = nullptr;
     HWND hTooltip = nullptr;
     std::string m_text;
     WNDPROC oldStaticProc = nullptr;
     bool m_hovered = false;
+    bool m_shown = false;
 
     static std::map<HWND, TooltipHelper*> TooltipHelperMap;
 
     static LRESULT CALLBACK StaticProc(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam);
     LRESULT OnStaticMessage(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam);
+    void ShowTip();
+    void HideTip();
+    bool IsCursorInside() const;
     void DrawCircle(HWND hWnd, HDC hdc);
 };
 
@@ -575,3 +625,6 @@ public:
 	TransparencyHelper m_transparency;
 	FString m_transparencyKey;
 };
+
+constexpr UINT WM_LAUNCH_RANDOM_TREE = WM_APP + 0x4D3;
+void LaunchRandomTreeDeferred();

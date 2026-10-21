@@ -60,6 +60,8 @@ public:
         TurnToTaskforce = 1500,
         TurnToScript = 1501,
         TurnToTag = 1502,
+        TurnToTransportWaypoint = 1504,
+        TurnToWaypoint = 1505,
         SearchReference = 1999,
         DragPoint = 2001,
     };
@@ -103,6 +105,8 @@ protected:
     static void OnClickTurnToTaskforce();
     static void OnClickTurnToScript();
     static void OnClickTurnToTag();
+    static void OnClickTurnToTransportWaypoint();
+    static void OnClickTurnToWaypoint();
 
     static void Close(HWND& hWnd);
 
@@ -114,7 +118,7 @@ protected:
 private:
     static HWND m_hwnd;
     static CFinalSunDlg* m_parent;
-    static CINI& map;
+    static CINIExt& map;
     static MultimapHelper& rules;
 public:
     static HWND hSelectedTeam;
@@ -162,6 +166,8 @@ public:
     static HWND hTurnToTaskforce;
     static HWND hTurnToScript;
     static HWND hTurnToTag;
+    static HWND hTurnToTransportWaypoint;
+    static HWND hTurnToWaypoint;
     static HWND hDragPoint;
 
     static bool TaskforceListChanged;

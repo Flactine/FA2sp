@@ -112,7 +112,7 @@ static std::string GetRelativePath(const std::filesystem::path& full, const std:
 // ---------------------------------------------------------------------------
 static std::string GetIniSection(const std::string& section)
 {
-    auto& pMap = CINI::CurrentDocument;
+    auto& pMap = CINIExt::CurrentDocument;
 
 	auto pSection = pMap->GetSection(section.c_str());
 	if (!pSection) return "Section \"" + section + "\" not found or empty.";
@@ -895,9 +895,8 @@ void CMcpServer::Start(int port)
     svr->Post("/", [](const httplib::Request& req, httplib::Response& res) {
         res.set_header("Access-Control-Allow-Origin", "*");
 
-        json request;
-        try { request = json::parse(req.body); }
-        catch (...) {
+        json request = json::parse(req.body, nullptr, false);
+        if (request.is_discarded()) {
             res.status = 400;
             res.set_content(
                 R"({"jsonrpc":"2.0","id":null,"error":{"code":-32700,"message":"Parse error"}})",
@@ -966,7 +965,7 @@ bool CMcpServer::IsRunning()
 static std::string CaptureMapIniState()
 {
 	std::ostringstream oss;
-    for (auto& section : CINI::CurrentDocument->Dict)
+    for (auto& section : CINIExt::CurrentDocument->Dict)
     {
         if (!strcmp(section.first, "Preview")
             || !strcmp(section.first, "PreviewPack")
