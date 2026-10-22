@@ -1983,7 +1983,7 @@ InsigniaGrid CLoadingExt::GetInsignia(const FString& ID)
 
 void CLoadingExt::LoadInsignia(const FString& ID)
 {
-	const char* PaletteName = "palette.pal";
+	const char* PaletteName = "insignia.pal";//palette.pal
 
 	FString InsigniaRookie = Variables::RulesMap.GetString(ID, "Insignia.Rookie");
 	FString InsigniaVeteran = Variables::RulesMap.GetString(ID, "Insignia.Veteran");

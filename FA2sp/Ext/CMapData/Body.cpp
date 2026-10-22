@@ -5911,7 +5911,7 @@ void CMapDataExt::InitializeAllHdmEdition(bool updateMinimap, bool reloadCellDat
 		const char* InsigniaVeteran = "FA2spInsigniaVeteran";
 		const char* InsigniaElite = "FA2spInsigniaElite";
 		const char* DefaultInsigniaFile = "pips.shp";
-		const char* PaletteName = "palette.pal";
+		const char* PaletteName = "insignia.pal";//palette.pal
 		CLoadingExt::LoadShp(InsigniaVeteran, "pips.shp", PaletteName, 14);
 		CLoadingExt::LoadShp(InsigniaElite, "pips.shp", PaletteName, 15);
 		CLoadingExt::DamageFires.clear();
